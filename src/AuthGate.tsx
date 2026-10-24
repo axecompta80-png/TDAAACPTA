@@ -25,6 +25,8 @@ export default function AuthGate() {
     return (
       <AuthScreen
         onAuthenticated={(u) => {
+          // L'admin arrive dans son espace ; le bouton « Espace comptable » le ramène ici, déjà connecté.
+          if (u.role === 'ADMIN') return window.location.assign('/admin');
           setUser(u);
           setStatus('authenticated');
         }}
