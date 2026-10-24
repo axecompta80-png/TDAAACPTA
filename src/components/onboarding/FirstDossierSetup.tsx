@@ -96,11 +96,10 @@ export const FirstDossierSetup: React.FC<FirstDossierSetupProps> = ({ currentUse
             <span className="hidden sm:block text-xs font-bold text-[#1E084A]">{currentUser.name}</span>
             <button
               onClick={onLogout}
-              className="p-2.5 rounded-xl border border-[#DDD6FE] bg-[#F5F3FF] text-[#7024E3] hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all"
-              title="Se déconnecter"
-              aria-label="Se déconnecter"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[#DDD6FE] bg-[#F5F3FF] text-[#7024E3] text-xs font-bold hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all"
             >
               <LogOut className="w-4 h-4" />
+              <span>Se déconnecter</span>
             </button>
           </div>
         </div>
