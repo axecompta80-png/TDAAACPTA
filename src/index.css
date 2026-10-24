@@ -1,0 +1,175 @@
+@import "tailwindcss";
+
+/* Échelle typographique légèrement agrandie pour toute l'application
+   (text-xs à text-xl), afin que les textes soient plus lisibles. */
+@theme {
+  --text-xs: 0.8125rem;      /* 13px, au lieu de 12px */
+  --text-xs--line-height: 1.2rem;
+  --text-sm: 0.9375rem;      /* 15px, au lieu de 14px */
+  --text-sm--line-height: 1.4rem;
+  --text-base: 1.0625rem;    /* 17px, au lieu de 16px */
+  --text-base--line-height: 1.65rem;
+  --text-lg: 1.1875rem;      /* 19px, au lieu de 18px */
+  --text-lg--line-height: 1.8rem;
+  --text-xl: 1.3125rem;      /* 21px, au lieu de 20px */
+  --text-xl--line-height: 1.85rem;
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    /* Brand Charter extracted from AxeCompta Official Logo */
+    --color-brand-indigo: #1E084A;
+    --color-brand-deep: #250D5A;
+    --color-brand-violet: #7024E3;
+    --color-brand-purple: #7C3AED;
+    --color-brand-light: #8B5CF6;
+    --color-brand-soft: #F5F3FF;
+    --color-brand-tint: #EDE9FE;
+    --color-brand-border: #DDD6FE;
+    
+    --color-canvas: #F8F7FD;
+    --color-surface: #FFFFFF;
+    --color-surface-hover: #FAF8FF;
+    
+    --color-emerald-fin: #059669;
+    --color-amber-fin: #D97706;
+    --color-crimson-fin: #DC2626;
+  }
+
+  html.dark, :root[data-theme="dark"] {
+    --color-brand-indigo: #0C051B;
+    --color-brand-deep: #14092B;
+    --color-brand-violet: #8B5CF6;
+    --color-brand-purple: #A78BFA;
+    --color-brand-light: #C4B5FD;
+    --color-brand-soft: #1E1238;
+    --color-brand-tint: #2A174E;
+    --color-brand-border: #35225E;
+
+    --color-canvas: #0C051B;
+    --color-surface: #150A2A;
+    --color-surface-hover: #1E0E3D;
+    
+    color-scheme: dark;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: #F8F7FD;
+    color: #1E084A;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+
+  body.dark {
+    background-color: #0C051B;
+    color: #F3EFFF;
+  }
+
+  h1, h2, h3, h4, .font-heading {
+    font-family: 'Outfit', 'Plus Jakarta Sans', sans-serif;
+    font-weight: 700;
+  }
+
+  .font-tabular {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Subtle modern grid / dot pattern inspired by financial computation & precision */
+.bg-brand-grid {
+  background-image: radial-gradient(#7C3AED 0.85px, transparent 0.85px);
+  background-size: 24px 24px;
+  background-position: 0 0;
+  background-color: #F8F7FD;
+}
+.dark .bg-brand-grid {
+  background-image: radial-gradient(#8B5CF6 0.95px, transparent 0.95px);
+  background-color: #0C051B;
+}
+
+.bg-brand-mesh {
+  background: radial-gradient(circle at 10% 20%, rgba(112, 36, 227, 0.04) 0%, transparent 40%),
+              radial-gradient(circle at 90% 80%, rgba(139, 92, 246, 0.05) 0%, transparent 40%),
+              #F8F7FD;
+}
+.dark .bg-brand-mesh {
+  background: radial-gradient(circle at 10% 20%, rgba(139, 92, 246, 0.12) 0%, transparent 40%),
+              radial-gradient(circle at 90% 80%, rgba(112, 36, 227, 0.14) 0%, transparent 40%),
+              #0C051B;
+}
+
+.bg-brand-dark {
+  background-color: #1E084A;
+  background-image: radial-gradient(circle at 50% 0%, #2A0E68 0%, #1E084A 70%);
+}
+
+.bg-brand-gradient {
+  background: linear-gradient(135deg, #1E084A 0%, #2E1065 45%, #7024E3 100%);
+}
+
+.bg-violet-gradient {
+  background: linear-gradient(135deg, #7024E3 0%, #8B5CF6 100%);
+}
+
+/* Sleek fintech cards */
+.card-fintech {
+  background-color: #FFFFFF;
+  border: 1px solid #E9E3F8;
+  box-shadow: 0 1px 3px 0 rgba(30, 8, 74, 0.04), 0 1px 2px -1px rgba(30, 8, 74, 0.02);
+  border-radius: 12px;
+}
+
+.dark .card-fintech {
+  background-color: #150A2A;
+  border-color: #2D1A54;
+  box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.4);
+}
+
+.card-fintech-hover {
+  transition: all 0.2s ease-in-out;
+}
+.card-fintech-hover:hover {
+  border-color: #DDD6FE;
+  box-shadow: 0 4px 12px -2px rgba(112, 36, 227, 0.08), 0 2px 6px -1px rgba(30, 8, 74, 0.04);
+}
+.dark .card-fintech-hover:hover {
+  border-color: #7024E3;
+  box-shadow: 0 4px 16px -2px rgba(112, 36, 227, 0.25);
+}
+
+/* Asymmetric / curved chat bubble styling */
+.rounded-bubble-agent {
+  border-radius: 4px 16px 16px 16px;
+}
+.rounded-bubble-user {
+  border-radius: 16px 4px 16px 16px;
+}
+
+/* Modern clean scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F1EDFC;
+}
+.dark ::-webkit-scrollbar-track {
+  background: #14092B;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 4px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #3B2366;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #7024E3;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #8B5CF6;
+}

@@ -1,0 +1,9 @@
+{
+  "name": "AxeCompta",
+  "short_name": "AxeCompta",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F8F7FD",
+  "theme_color": "#1E084A",
+  "icons": [{ "src": "/logo.png", "sizes": "1080x1080", "type": "image/png", "purpose": "any" }]
+}

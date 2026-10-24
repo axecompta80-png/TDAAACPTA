@@ -1,0 +1,34 @@
+<svg viewBox="0 0 240 240" width="240" height="240" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="favRibbon" x1="40" y1="200" x2="190" y2="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#23085A" />
+      <stop offset="40%" stop-color="#4C1D95" />
+      <stop offset="75%" stop-color="#7C3AED" />
+      <stop offset="100%" stop-color="#8B5CF6" />
+    </linearGradient>
+    <linearGradient id="favCalc" x1="140" y1="180" x2="210" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#581C87" />
+      <stop offset="100%" stop-color="#7C3AED" />
+    </linearGradient>
+  </defs>
+
+  <!-- Sweeping ribbon 'A' -->
+  <path
+    d="M 38 194 C 28 193 28 180 36 170 C 72 125 104 60 132 24 C 138 16 147 16 152 23 C 178 58 194 95 198 108 C 194 108 178 108 162 108 C 110 108 64 155 38 194 Z"
+    fill="url(#favRibbon)"
+  />
+
+  <!-- 3 Growth Bars -->
+  <rect x="100" y="166" width="16" height="34" rx="8" fill="#2E1065" />
+  <rect x="126" y="148" width="16" height="52" rx="8" fill="#581C87" />
+  <rect x="152" y="126" width="16" height="74" rx="8" fill="#7C3AED" />
+
+  <!-- Calculator box -->
+  <path
+    d="M 186 108 L 222 108 C 232 108 238 116 238 126 L 238 180 C 238 190 232 198 222 198 L 186 198"
+    fill="none"
+    stroke="url(#favCalc)"
+    stroke-width="8"
+    stroke-linecap="round"
+  />
+</svg>

@@ -1,0 +1,6 @@
+{
+  "name": "AxeCompta",
+  "description": "Premier agent IA de gestion comptable natif pour l'Afrique (zone OHADA / SYSCOHADA) pour entrepreneurs et cabinets comptables.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

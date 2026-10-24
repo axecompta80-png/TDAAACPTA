@@ -1,0 +1,350 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Enums (miroir des unions TypeScript de src/types.ts) ----------
+
+enum RegimeFiscal {
+  REEL_SIMPLIFIE      @map("Réel Simplifié")
+  REEL_NORMAL         @map("Réel Normal")
+  SYNTHETIQUE_FORFAIT @map("Synthétique / Forfait")
+}
+
+enum UserRole {
+  ADMIN
+  CHEF_COMPTABLE // validation + dévalidation / annulation
+  DAF // validation définitive
+  COMPTABLE // saisie uniquement
+  LECTURE_SEULE
+}
+
+enum AccountCategory {
+  bilan_actif
+  bilan_passif
+  charge
+  produit
+  tresorerie
+}
+
+// Cycle de vie : draft -> pending_review (ou anomaly) -> validated -> cancelled
+enum TransactionStatus {
+  draft
+  pending_review
+  anomaly
+  validated
+  cancelled
+}
+
+enum InvoiceStatus {
+  draft
+  pending_review
+  validated
+  cancelled
+}
+
+enum InvoiceMode {
+  cash
+  credit
+}
+
+enum InputMode {
+  text
+  voice
+  photo
+  mobile_money
+  manual
+  excel_import
+}
+
+enum PaymentMethod {
+  cash
+  orange_money
+  mtn_momo
+  wave
+  moov_money
+  bank_transfer
+  cheque
+}
+
+enum AuditAction {
+  created_by_ai
+  validated_by_expert
+  auto_validated
+  edited_by_expert
+  anomaly_flagged
+  submitted_for_review
+  unvalidated
+  cancelled
+}
+
+enum NotificationType {
+  info
+  success
+  warning
+  error
+}
+
+enum NotificationCategory {
+  compta
+  fiscal
+  tresorerie
+  ia
+  system
+}
+
+enum AiModelPreference {
+  GEMINI_2_5_FLASH      @map("gemini-2.5-flash")
+  GEMINI_2_5_FLASH_LITE @map("gemini-2.5-flash-lite")
+  HEURISTIC_FAST        @map("heuristic-fast")
+}
+
+enum StartupView {
+  simplified
+  expert
+}
+
+enum NumberFormatting {
+  standard
+  compact
+}
+
+enum SoundType {
+  fintech_chime
+  crystal_bell
+  soft_chord
+  alert_warning
+}
+
+// ---------- Modèles ----------
+
+model ClientDossier {
+  id                  String       @id @default(uuid())
+  ownerId             String
+  owner               User         @relation("UserDossiers", fields: [ownerId], references: [id], onDelete: Cascade)
+  name                String
+  managerName         String
+  phone               String
+  activity            String
+  city                String
+  country             String
+  rccm                String
+  ifu                 String
+  regimeFiscal        RegimeFiscal
+  confidenceThreshold Int          @default(85)
+  currency            String
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  journalEntries JournalEntry[]
+  notifications  AppNotification[]
+  accounts       SyscohadaAccount[]
+  invoices       Invoice[]
+
+  @@index([ownerId])
+  @@map("client_dossiers")
+}
+
+// dossierId null = plan SYSCOHADA standard ; sinon compte propre à un dossier.
+// ponytail: code unique pour toute la plateforme (deux dossiers ne peuvent pas réutiliser le même code) ;
+// passer à une clé (dossierId, code) si ce besoin apparaît.
+model SyscohadaAccount {
+  code        String          @id
+  label       String
+  classNumber Int
+  category    AccountCategory
+  parentCode  String?
+  active      Boolean         @default(true)
+  dossierId   String?
+  dossier     ClientDossier?  @relation(fields: [dossierId], references: [id], onDelete: Cascade)
+
+  debitEntries  JournalEntry[] @relation("DebitAccount")
+  creditEntries JournalEntry[] @relation("CreditAccount")
+
+  @@index([dossierId])
+  @@map("syscohada_accounts")
+}
+
+model JournalEntry {
+  id                    String            @id @default(uuid())
+  date                  DateTime          @db.Date
+  label                 String
+  pieceRef              String
+  debitAccountCode      String
+  debitAccount          SyscohadaAccount  @relation("DebitAccount", fields: [debitAccountCode], references: [code])
+  creditAccountCode     String
+  creditAccount         SyscohadaAccount  @relation("CreditAccount", fields: [creditAccountCode], references: [code])
+  amount                Decimal           @db.Decimal(14, 2)
+  tvaAmount             Decimal           @db.Decimal(14, 2)
+  clientDossierId       String
+  clientDossier         ClientDossier     @relation(fields: [clientDossierId], references: [id], onDelete: Cascade)
+  status                TransactionStatus @default(pending_review)
+  confidenceScore       Int
+  detectedAnomaly       String?
+  rawInput              String
+  inputType             InputMode
+  explanationSimplified String
+  paymentMethod         PaymentMethod
+  createdAt             DateTime          @default(now())
+  // Séparation des tâches : celui qui saisit ou modifie ne peut pas valider.
+  createdById           String?
+  updatedById           String?
+  validatedById         String?
+  validatedAt           DateTime?
+  invoiceId             String?
+  invoice               Invoice?          @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  auditTrail AuditLog[]
+  payments   InvoicePayment[]
+
+  @@index([clientDossierId])
+  @@map("journal_entries")
+}
+
+model AuditLog {
+  id              String       @id @default(uuid())
+  journalEntryId  String
+  journalEntry    JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  timestamp       DateTime     @default(now())
+  action          AuditAction
+  author          String
+  notes           String?
+  previousValue   String?
+  confidenceScore Int?
+
+  @@index([journalEntryId])
+  @@map("audit_logs")
+}
+
+model AppNotification {
+  id              String               @id @default(uuid())
+  title           String
+  message         String
+  timestamp       DateTime             @default(now())
+  type            NotificationType
+  category        NotificationCategory
+  read            Boolean              @default(false)
+  dossierId       String?
+  dossier         ClientDossier?       @relation(fields: [dossierId], references: [id], onDelete: Cascade)
+  actionLabel     String?
+  actionMode      StartupView?
+  actionExpertTab String?
+
+  @@index([dossierId])
+  @@map("app_notifications")
+}
+
+// Réglages globaux de la plateforme (une seule ligne applicative)
+model PlatformSettings {
+  id                         String            @id @default(uuid())
+  syscohadaVersion           String
+  cashDeductibilityThreshold Decimal           @db.Decimal(14, 2)
+  defaultVatRate             Decimal           @db.Decimal(5, 2)
+  autoFlagLargeCashPayments  Boolean
+  defaultDebitCashAccount    String
+  defaultCreditSalesAccount  String
+  defaultDebitExpenseAccount String
+  globalConfidenceThreshold  Int
+  autoValidateHighConfidence Boolean
+  duplicateDetection         Boolean
+  aiModelPreference          AiModelPreference
+  defaultStartupView         StartupView
+  numberFormatting           NumberFormatting
+  cabinetName                String
+  expertLicenseNumber        String
+  soundEnabled               Boolean
+  soundType                  SoundType
+  soundVolume                Float
+  notifyOnAnomaly            Boolean
+  notifyOnTaxDeadline        Boolean
+  notifyOnMobileMoneySync    Boolean
+  updatedAt                  DateTime          @updatedAt
+
+  @@map("platform_settings")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         UserRole @default(COMPTABLE)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Un dossier comptable appartient à un seul utilisateur (cloisonnement des données).
+  dossiers ClientDossier[] @relation("UserDossiers")
+
+  @@map("users")
+}
+
+model Invoice {
+  id                  String         @id @default(uuid())
+  clientDossierId     String
+  clientDossier       ClientDossier  @relation(fields: [clientDossierId], references: [id], onDelete: Cascade)
+  number              String
+  date                DateTime       @db.Date
+  dueDate             DateTime       @db.Date
+  mode                InvoiceMode
+  paymentMethod       PaymentMethod?
+  customerName        String
+  customerPhone       String?
+  customerEmail       String?
+  customerAddress     String?
+  customerTaxId       String?
+  customerAccountCode String         @default("4111")
+  salesAccountCode    String         @default("7011")
+  vatRate             Decimal        @db.Decimal(5, 2)
+  totalHT             Decimal        @db.Decimal(14, 2)
+  totalTVA            Decimal        @db.Decimal(14, 2)
+  totalTTC            Decimal        @db.Decimal(14, 2)
+  paymentTerms        String?
+  notes               String?
+  status              InvoiceStatus  @default(draft)
+  createdById         String?
+  updatedById         String?
+  validatedById       String?
+  validatedAt         DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  lines    InvoiceLine[]
+  payments InvoicePayment[]
+  entries  JournalEntry[]
+
+  @@unique([clientDossierId, number])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id          String  @id @default(uuid())
+  invoiceId   String
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  position    Int
+  description String
+  quantity    Decimal @db.Decimal(14, 3)
+  unitPrice   Decimal @db.Decimal(14, 2)
+  amountHT    Decimal @db.Decimal(14, 2)
+
+  @@index([invoiceId])
+  @@map("invoice_lines")
+}
+
+// Lettrage : rattache tout ou partie d'un règlement (écriture au crédit du 411) à une facture.
+model InvoicePayment {
+  id          String       @id @default(uuid())
+  invoiceId   String
+  invoice     Invoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  entryId     String
+  entry       JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  amount      Decimal      @db.Decimal(14, 2)
+  createdById String?
+  createdAt   DateTime     @default(now())
+
+  @@index([invoiceId])
+  @@index([entryId])
+  @@map("invoice_payments")
+}

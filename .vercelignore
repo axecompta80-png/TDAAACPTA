@@ -1,0 +1,13 @@
+# Déploiement depuis la CLI : ne jamais envoyer de secrets ni d'artefacts locaux
+.env*
+!.env.example
+DAF.txt
+.neon
+.claude
+node_modules
+dist
+build
+coverage
+*.log
+COMPTES_PROD.txt
+backup-mdp-prod-*
