@@ -14,7 +14,10 @@ import { DEFAULT_PLATFORM_SETTINGS } from '../../src/data/initialSettings';
 /** Relations systématiquement chargées pour reconstituer une écriture complète côté client. */
 export const ENTRY_INCLUDE = { auditTrail: true, debitAccount: true, creditAccount: true } as const;
 /** Owner chargé pour exposer le propriétaire d'un dossier (vue cabinet administrateur). */
-export const DOSSIER_INCLUDE = { owner: { select: { name: true } } } as const;
+export const DOSSIER_INCLUDE = {
+  owner: { select: { name: true } },
+  assignments: { select: { user: { select: { id: true, name: true } } }, orderBy: { createdAt: 'asc' } },
+} as const;
 
 /**
  * Charges utiles de démarrage de l'application.

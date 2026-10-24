@@ -264,7 +264,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     }
 
     const newEntries: JournalEntry[] = selectedRows.map((r, i) => {
-      // Séparation des tâches : un import n'est jamais validé directement (soumis ou brouillon).
+      // Un import arrive soumis ou en brouillon ; le serveur valide d'office les lignes sûres.
       const status: TransactionStatus = importAsValidated ? 'pending_review' : 'draft';
       return {
         id: `entry-imp-${Date.now()}-${i}`,

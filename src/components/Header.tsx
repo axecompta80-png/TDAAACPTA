@@ -2,7 +2,6 @@ import React from 'react';
 import { BrandLogo } from './BrandLogo';
 import { ClientDossier } from '../types';
 import { CurrentUser } from '../utils/authApi';
-import { seesAllDossiers } from '../utils/roles';
 import {
   Building2,
   Store,
@@ -12,7 +11,8 @@ import {
   Bell,
   Settings,
   LogOut,
-  Wallet
+  Wallet,
+  ShieldCheck
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -42,10 +42,7 @@ function getInitials(name: string) {
 
 const roleLabel: Record<CurrentUser['role'], string> = {
   ADMIN: 'Administrateur',
-  CHEF_COMPTABLE: 'Chef comptable',
-  DAF: 'DAF',
-  COMPTABLE: 'Entrepreneur',
-  LECTURE_SEULE: 'Lecture seule',
+  COMPTABLE: 'Comptable',
 };
 
 export const Header: React.FC<HeaderProps> = ({
@@ -110,7 +107,7 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="absolute left-0 mt-1.5 w-80 bg-white dark:bg-[#180D33] border border-[#DDD6FE] dark:border-[#35225E] shadow-xl z-50 rounded-xl py-1 overflow-hidden">
                 <div className="px-3.5 py-2 border-b border-[#EDE9FE] dark:border-[#2D1A54] bg-[#F8F7FD] dark:bg-[#140A28]">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-[#7024E3] dark:text-[#C4B5FD]">
-                    {seesAllDossiers(currentUser?.role) ? 'Tous les dossiers' : 'Mes dossiers'}
+                    Mes dossiers
                   </span>
                 </div>
                 {dossiers.map(d => {
@@ -137,8 +134,8 @@ export const Header: React.FC<HeaderProps> = ({
                       </div>
                       <span className="text-[12px] text-[#534674] dark:text-[#A594C9] truncate mt-0.5">{d.activity}</span>
                       <span className="text-[10px] text-[#7C709A] dark:text-[#8E7BB8] font-mono mt-0.5">RCCM: {d.rccm}</span>
-                      {d.ownerName && seesAllDossiers(currentUser?.role) && (
-                        <span className="text-[10px] text-[#7024E3] dark:text-[#C4B5FD] font-bold mt-0.5">Propriétaire : {d.ownerName}</span>
+                      {d.ownerName && currentUser && d.ownerId !== currentUser.id && (
+                        <span className="text-[10px] text-[#7024E3] dark:text-[#C4B5FD] font-bold mt-0.5">Attribué par {d.ownerName}</span>
                       )}
                     </button>
                   );
@@ -253,6 +250,16 @@ export const Header: React.FC<HeaderProps> = ({
                       {roleLabel[currentUser.role]}
                     </span>
                   </div>
+
+                  {currentUser.role === 'ADMIN' && (
+                    <a
+                      href="/admin"
+                      className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-bold text-[#7024E3] dark:text-[#C4B5FD] hover:bg-[#F5F3FF] dark:hover:bg-[#231444] transition-colors"
+                    >
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>Espace admin</span>
+                    </a>
+                  )}
 
                   {onOpenSettings && (
                     <button

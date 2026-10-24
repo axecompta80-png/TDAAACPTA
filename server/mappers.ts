@@ -51,6 +51,7 @@ export function serializeDossier(row: any): ClientDossier {
     id: row.id,
     ownerId: row.ownerId,
     ownerName: row.owner?.name ?? undefined,
+    assignees: (row.assignments ?? []).map((a: any) => ({ id: a.user.id, name: a.user.name })),
     name: row.name,
     managerName: row.managerName,
     phone: row.phone,

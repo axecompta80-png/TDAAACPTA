@@ -4,7 +4,7 @@ import { hashPassword } from './auth';
 
 const router = Router();
 
-const ROLES = ['ADMIN', 'CHEF_COMPTABLE', 'DAF', 'COMPTABLE', 'LECTURE_SEULE'] as const;
+const ROLES = ['ADMIN', 'COMPTABLE'] as const;
 
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
   const user = (req as any).user;
@@ -14,9 +14,11 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-function serializeUser(u: { id: string; email: string; name: string; role: string; createdAt: Date }) {
-  return { id: u.id, email: u.email, name: u.name, role: u.role, createdAt: u.createdAt.toISOString() };
+function serializeUser(u: { id: string; email: string; name: string; role: string; createdAt: Date; organization?: { name: string } }) {
+  return { id: u.id, email: u.email, name: u.name, role: u.role, createdAt: u.createdAt.toISOString(), organizationName: u.organization?.name };
 }
+
+const WITH_ORG = { organization: { select: { name: true } } } as const;
 
 function validId(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -27,14 +29,14 @@ router.use(requireAdmin);
 
 router.get('/users', async (_req, res, next) => {
   try {
-    const users = await prisma.user.findMany({ orderBy: { createdAt: 'asc' } });
+    const users = await prisma.user.findMany({ orderBy: { createdAt: 'asc' }, include: WITH_ORG });
     res.json(users.map(serializeUser));
   } catch (e) {
     next(e);
   }
 });
 
-/** Création d'un compte par un administrateur, avec le rôle de son choix (y compris ADMIN). */
+/** Création d'un compte par un administrateur (ADMIN ou COMPTABLE), avec sa propre entreprise. */
 router.post('/users', async (req, res, next) => {
   try {
     const { email, name, password, role } = req.body ?? {};
@@ -57,7 +59,7 @@ router.post('/users', async (req, res, next) => {
     }
 
     const passwordHash = await hashPassword(password);
-    const user = await prisma.user.create({ data: { email, name: name.trim(), passwordHash, role } });
+    const user = await prisma.user.create({ data: { email, name: name.trim(), passwordHash, role, organization: { create: { name: name.trim() } } }, include: WITH_ORG });
     res.status(201).json(serializeUser(user));
   } catch (e) {
     next(e);
@@ -77,7 +79,7 @@ router.post('/users/:id/role', async (req, res, next) => {
     if (id === requester.sub && role !== 'ADMIN') {
       return res.status(400).json({ error: 'Vous ne pouvez pas retirer votre propre rôle administrateur.' });
     }
-    const updated = await prisma.user.update({ where: { id }, data: { role } });
+    const updated = await prisma.user.update({ where: { id }, data: { role }, include: WITH_ORG });
     res.json(serializeUser(updated));
   } catch (e) {
     next(e);
@@ -93,7 +95,7 @@ router.post('/users/:id/password', async (req, res, next) => {
     if (typeof password !== 'string' || password.length < 8) {
       return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères.' });
     }
-    const updated = await prisma.user.update({ where: { id }, data: { passwordHash: await hashPassword(password) } });
+    const updated = await prisma.user.update({ where: { id }, data: { passwordHash: await hashPassword(password) }, include: WITH_ORG });
     res.json(serializeUser(updated));
   } catch (e) {
     next(e);

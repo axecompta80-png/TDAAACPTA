@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ClientDossier, JournalEntry, AppNotification, NotificationType, NotificationCategory, PlatformSettings, Invoice } from './types';
 import { registerCustomAccounts } from './data/syscohadaPlan';
-import { seesAllDossiers, ownsDossier } from './utils/roles';
 import { showDeviceNotification } from './utils/deviceNotify';
 import { DEFAULT_PLATFORM_SETTINGS } from './data/initialSettings';
 import { soundManager } from './utils/sound';
@@ -643,7 +642,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
                   setExpertTab('journal');
                 }}
                 onUpdateConfidenceThreshold={handleUpdateConfidenceThreshold}
-                groupByOwner={seesAllDossiers(currentUser.role)}
+                groupByOwner={dossiers.some(d => d.ownerId !== currentUser.id)}
               />
             )}
 
@@ -676,7 +675,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
               <ChartOfAccounts
                 activeDossier={activeDossier}
                 entries={activeEntries}
-                canEdit={currentUser.role !== 'LECTURE_SEULE'}
+                canEdit
                 onChanged={() => setPlanVersion(v => v + 1)}
                 notify={showToast}
               />
@@ -743,7 +742,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
       {isQuickInvoiceOpen && (
         <QuickInvoiceModal
           activeDossier={activeDossier}
-          issueDirectly={ownsDossier(activeDossier, currentUser)}
+          issueDirectly
           onClose={() => setIsQuickInvoiceOpen(false)}
           onCreated={(inv, invEntries) => {
             upsertInvoice(inv);
@@ -795,6 +794,8 @@ export default function App({ currentUser, onLogout }: AppProps) {
         onDeleteDossier={handleDeleteDossier}
         entries={entries}
         onImportBackup={handleImportBackup}
+        currentUser={currentUser}
+        onDossierChanged={(saved) => setDossiers(prev => prev.map(d => d.id === saved.id ? saved : d))}
       />
     </div>
   );

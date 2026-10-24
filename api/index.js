@@ -41,6 +41,7 @@ function serializeDossier(row) {
     id: row.id,
     ownerId: row.ownerId,
     ownerName: row.owner?.name ?? void 0,
+    assignees: (row.assignments ?? []).map((a) => ({ id: a.user.id, name: a.user.name })),
     name: row.name,
     managerName: row.managerName,
     phone: row.phone,
@@ -373,7 +374,7 @@ import express from "express";
 import cookieParser from "cookie-parser";
 
 // server/routes/index.ts
-import { Router as Router8 } from "express";
+import { Router as Router9 } from "express";
 
 // server/http.ts
 function handler(fn) {
@@ -441,14 +442,17 @@ function getAuthUser(req) {
 }
 
 // server/access.ts
-function seesAllDossiers(role) {
-  return role === "DAF" || role === "CHEF_COMPTABLE";
+var NONE = { id: "__aucun__" };
+function dossierScopeWhere(req) {
+  const user = getAuthUser(req);
+  if (!user) return NONE;
+  return { OR: [{ ownerId: user.sub }, { assignments: { some: { userId: user.sub } } }] };
 }
-function canValidate(role) {
-  return role === "DAF" || role === "CHEF_COMPTABLE";
+function entryScopeWhere(req) {
+  return { clientDossier: dossierScopeWhere(req) };
 }
-function canUnvalidate(role) {
-  return role === "CHEF_COMPTABLE";
+function notificationScopeWhere(req) {
+  return { dossier: dossierScopeWhere(req) };
 }
 async function ownsDossier(req, dossierId) {
   const user = getAuthUser(req);
@@ -462,45 +466,22 @@ async function actorName(req) {
   const row = await prisma.user.findUnique({ where: { id: user.sub }, select: { name: true } });
   return row?.name ?? user.email;
 }
-function dossierScopeWhere(req) {
-  const user = getAuthUser(req);
-  if (!user) return { ownerId: "__aucun__" };
-  return seesAllDossiers(user.role) ? {} : { ownerId: user.sub };
-}
-function entryScopeWhere(req) {
-  const user = getAuthUser(req);
-  if (!user) return { clientDossier: { ownerId: "__aucun__" } };
-  return seesAllDossiers(user.role) ? {} : { clientDossier: { ownerId: user.sub } };
-}
-function notificationScopeWhere(req) {
-  const user = getAuthUser(req);
-  if (!user) return { dossier: { ownerId: "__aucun__" } };
-  return seesAllDossiers(user.role) ? {} : { dossier: { ownerId: user.sub } };
-}
 async function findAccessibleDossier(req, dossierId) {
-  const user = getAuthUser(req);
-  if (!user) return null;
-  const dossier = await prisma.clientDossier.findUnique({ where: { id: dossierId } });
-  if (!dossier) return null;
-  if (!seesAllDossiers(user.role) && dossier.ownerId !== user.sub) return null;
-  return dossier;
+  if (!getAuthUser(req)) return null;
+  return prisma.clientDossier.findFirst({ where: { id: dossierId, ...dossierScopeWhere(req) } });
 }
 async function findAccessibleEntry(req, entryId) {
-  const user = getAuthUser(req);
-  if (!user) return null;
-  const entry = await prisma.journalEntry.findUnique({ where: { id: entryId } });
-  if (!entry) return null;
-  if (!seesAllDossiers(user.role)) {
-    const dossier = await prisma.clientDossier.findUnique({ where: { id: entry.clientDossierId } });
-    if (!dossier || dossier.ownerId !== user.sub) return null;
-  }
-  return entry;
+  if (!getAuthUser(req)) return null;
+  return prisma.journalEntry.findFirst({ where: { id: entryId, ...entryScopeWhere(req) } });
 }
 
 // server/routes/bootstrap.ts
 init_initialSettings();
 var ENTRY_INCLUDE = { auditTrail: true, debitAccount: true, creditAccount: true };
-var DOSSIER_INCLUDE = { owner: { select: { name: true } } };
+var DOSSIER_INCLUDE = {
+  owner: { select: { name: true } },
+  assignments: { select: { user: { select: { id: true, name: true } } }, orderBy: { createdAt: "asc" } }
+};
 async function buildBootstrapPayload(req) {
   const dossierScope = dossierScopeWhere(req);
   const [dossierRows, entryRows, notificationRows, settingsRow, accountRows, invoiceRows] = await Promise.all([
@@ -905,8 +886,49 @@ router.post("/dossiers/:id/delete", handler(async (req, res) => {
   if (!id) return res.status(400).json({ error: "Identifiant de dossier invalide." });
   const existing = await findAccessibleDossier(req, id);
   if (!existing) return res.status(404).json({ error: "Dossier introuvable." });
+  if (!await ownsDossier(req, id)) return res.status(403).json({ error: "Seul le cr\xE9ateur du dossier peut le supprimer." });
   await prisma.clientDossier.delete({ where: { id } });
   res.status(204).end();
+}));
+async function assignmentGuard(req, res) {
+  const id = identifier(req.params.id);
+  const dossier = id ? await findAccessibleDossier(req, id) : null;
+  if (!dossier) {
+    res.status(404).json({ error: "Dossier introuvable." });
+    return null;
+  }
+  if (dossier.ownerId !== getAuthUser(req).sub) {
+    res.status(403).json({ error: "Seul le cr\xE9ateur du dossier peut g\xE9rer ses attributions." });
+    return null;
+  }
+  return dossier.id;
+}
+router.post("/dossiers/:id/assignments", handler(async (req, res) => {
+  const dossierId = await assignmentGuard(req, res);
+  if (!dossierId) return;
+  const me = getAuthUser(req).sub;
+  const targetId = identifier((req.body ?? {}).userId);
+  if (!targetId || targetId === me) return res.status(400).json({ error: "Comptable invalide." });
+  const [self, target] = await Promise.all([
+    prisma.user.findUnique({ where: { id: me }, select: { organizationId: true } }),
+    prisma.user.findUnique({ where: { id: targetId }, select: { organizationId: true } })
+  ]);
+  if (!target || target.organizationId !== self?.organizationId) {
+    return res.status(404).json({ error: "Comptable introuvable dans votre entreprise." });
+  }
+  await prisma.dossierAssignment.upsert({
+    where: { dossierId_userId: { dossierId, userId: targetId } },
+    create: { dossierId, userId: targetId },
+    update: {}
+  });
+  res.json(serializeDossier(await prisma.clientDossier.findUnique({ where: { id: dossierId }, include: DOSSIER_INCLUDE })));
+}));
+router.post("/dossiers/:id/assignments/:userId/delete", handler(async (req, res) => {
+  const dossierId = await assignmentGuard(req, res);
+  if (!dossierId) return;
+  const userId2 = identifier(req.params.userId);
+  if (userId2) await prisma.dossierAssignment.deleteMany({ where: { dossierId, userId: userId2 } });
+  res.json(serializeDossier(await prisma.clientDossier.findUnique({ where: { id: dossierId }, include: DOSSIER_INCLUDE })));
 }));
 var dossiers_default = router;
 
@@ -926,14 +948,11 @@ async function assertAccountsUsable(codes, dossierId) {
   const missing = unique.filter((c) => !known.has(c));
   return missing.length ? `Compte inconnu ou inactif pour ce dossier : ${missing.join(", ")}.` : null;
 }
-function isOwnWork(row, userId2) {
-  return row.createdById === userId2 || row.updatedById === userId2;
-}
 function userId(req) {
   return getAuthUser(req).sub;
 }
-function autoValidates(e, dossier, uid) {
-  return dossier.ownerId === uid && e.status === "pending_review" && !e.detectedAnomaly && e.confidenceScore >= dossier.confidenceThreshold;
+function autoValidates(e, dossier) {
+  return e.status === "pending_review" && !e.detectedAnomaly && e.confidenceScore >= dossier.confidenceThreshold;
 }
 function autoValidationData(author, uid) {
   return {
@@ -945,7 +964,7 @@ function autoValidationData(author, uid) {
 }
 function entryCreateData(e, dossier, createdById, author) {
   const dossierId = dossier.id;
-  const auto = autoValidates(e, dossier, createdById);
+  const auto = autoValidates(e, dossier);
   return {
     id: e.id,
     date: new Date(e.date),
@@ -1023,7 +1042,7 @@ router2.post("/entries/:id/update", handler(async (req, res) => {
   const accountError = await assertAccountsUsable([e.debitAccountCode, e.creditAccountCode], existing.clientDossierId);
   if (accountError) return res.status(400).json({ error: accountError });
   const dossier = await prisma.clientDossier.findUniqueOrThrow({ where: { id: existing.clientDossierId } });
-  const auto = autoValidates(e, dossier, userId(req));
+  const auto = autoValidates(e, dossier);
   await prisma.journalEntry.update({
     where: { id },
     data: {
@@ -1099,15 +1118,6 @@ router2.post("/entries/batch-validate", handler(async (req, res) => {
       refused.push({ id, reason: entry.status === "draft" ? "Brouillon non soumis." : "D\xE9j\xE0 valid\xE9e ou annul\xE9e." });
       continue;
     }
-    const owner = await ownsDossier(req, entry.clientDossierId);
-    if (!owner && !canValidate(user.role)) {
-      refused.push({ id, reason: "Validation r\xE9serv\xE9e au propri\xE9taire du dossier." });
-      continue;
-    }
-    if (!owner && isOwnWork(entry, user.sub)) {
-      refused.push({ id, reason: "S\xE9paration des t\xE2ches : vous avez saisi ou modifi\xE9 cette \xE9criture." });
-      continue;
-    }
     await prisma.journalEntry.update({
       where: { id },
       data: {
@@ -1127,9 +1137,6 @@ router2.post("/entries/:id/unvalidate", handler(async (req, res) => {
   const id = identifier(req.params.id);
   const existing = id ? await findAccessibleEntry(req, id) : null;
   if (!existing) return res.status(404).json({ error: "\xC9criture introuvable." });
-  if (!canUnvalidate(getAuthUser(req)?.role) && !await ownsDossier(req, existing.clientDossierId)) {
-    return res.status(403).json({ error: "D\xE9validation r\xE9serv\xE9e au propri\xE9taire du dossier." });
-  }
   if (existing.status !== "validated") return res.status(409).json({ error: "Seule une \xE9criture valid\xE9e peut \xEAtre d\xE9valid\xE9e." });
   if (existing.invoiceId) return res.status(409).json({ error: "\xC9criture g\xE9n\xE9r\xE9e par une facture : annulez la facture." });
   const row = await prisma.journalEntry.update({
@@ -1148,9 +1155,6 @@ router2.post("/entries/:id/cancel", handler(async (req, res) => {
   const id = identifier(req.params.id);
   const existing = id ? await findAccessibleEntry(req, id) : null;
   if (!existing) return res.status(404).json({ error: "\xC9criture introuvable." });
-  if (!canUnvalidate(getAuthUser(req)?.role) && !await ownsDossier(req, existing.clientDossierId)) {
-    return res.status(403).json({ error: "Annulation r\xE9serv\xE9e au propri\xE9taire du dossier." });
-  }
   if (existing.status === "cancelled") return res.status(409).json({ error: "\xC9criture d\xE9j\xE0 annul\xE9e." });
   if (existing.invoiceId) return res.status(409).json({ error: "\xC9criture g\xE9n\xE9r\xE9e par une facture : annulez la facture." });
   const author = await actorName(req);
@@ -1640,13 +1644,7 @@ router7.post("/invoices/:id/validate", handler(async (req, res) => {
   const user = getAuthUser(req);
   const inv = await findAccessibleInvoice(req, identifier(req.params.id));
   if (!inv) return res.status(404).json({ error: "Facture introuvable." });
-  const owner = await ownsDossier(req, inv.clientDossierId);
-  if (!owner && !canValidate(user.role)) return res.status(403).json({ error: "Validation r\xE9serv\xE9e au propri\xE9taire du dossier." });
-  const validatable = owner ? ["draft", "pending_review"] : ["pending_review"];
-  if (!validatable.includes(inv.status)) return res.status(409).json({ error: "Cette facture ne peut plus \xEAtre valid\xE9e." });
-  if (!owner && isOwnWork(inv, user.sub)) {
-    return res.status(403).json({ error: "S\xE9paration des t\xE2ches : vous avez saisi ou modifi\xE9 cette facture." });
-  }
+  if (!["draft", "pending_review"].includes(inv.status)) return res.status(409).json({ error: "Cette facture ne peut plus \xEAtre valid\xE9e." });
   const author = await actorName(req);
   const invoice = serializeInvoice(inv);
   const treasury = invoice.paymentMethod ? treasuryAccountFor(invoice.paymentMethod).code : void 0;
@@ -1700,9 +1698,6 @@ router7.post("/invoices/:id/cancel", handler(async (req, res) => {
   const inv = await findAccessibleInvoice(req, identifier(req.params.id));
   if (!inv) return res.status(404).json({ error: "Facture introuvable." });
   if (inv.status === "cancelled") return res.status(409).json({ error: "Facture d\xE9j\xE0 annul\xE9e." });
-  if (inv.status === "validated" && !canUnvalidate(getAuthUser(req)?.role) && !await ownsDossier(req, inv.clientDossierId)) {
-    return res.status(403).json({ error: "Annulation d'une facture valid\xE9e r\xE9serv\xE9e au propri\xE9taire du dossier." });
-  }
   const author = await actorName(req);
   const reason = optionalText((req.body ?? {}).reason, 300) ?? `Annulation de la facture ${inv.number}.`;
   const generated = await prisma.journalEntry.findMany({ where: { invoiceId: inv.id }, select: { id: true } });
@@ -1741,7 +1736,6 @@ router7.post("/invoices/:id/payments", handler(async (req, res) => {
     if (accountError) return res.status(400).json({ error: accountError });
     const label = `R\xE8glement facture ${inv.number} \u2014 ${inv.customerName}`;
     const author = await actorName(req);
-    const owner = await ownsDossier(req, inv.clientDossierId);
     const entry2 = await prisma.journalEntry.create({
       data: {
         date: new Date(date),
@@ -1752,7 +1746,9 @@ router7.post("/invoices/:id/payments", handler(async (req, res) => {
         amount,
         tvaAmount: 0,
         clientDossierId: inv.clientDossierId,
-        ...owner ? { status: "validated", validatedById: user.sub, validatedAt: /* @__PURE__ */ new Date() } : { status: "pending_review" },
+        status: "validated",
+        validatedById: user.sub,
+        validatedAt: /* @__PURE__ */ new Date(),
         confidenceScore: 100,
         rawInput: label,
         inputType: "manual",
@@ -1794,25 +1790,77 @@ router7.post("/invoice-payments/:id/delete", handler(async (req, res) => {
 }));
 var invoices_default = router7;
 
-// server/routes/index.ts
+// server/routes/team.ts
+init_db();
+import { Router as Router8 } from "express";
 var router8 = Router8();
-router8.get("/bootstrap", handler(async (req, res) => {
+function serializeMember(u) {
+  return { id: u.id, name: u.name, email: u.email, role: u.role, createdById: u.createdById, createdAt: u.createdAt.toISOString() };
+}
+async function myOrganization(userId2) {
+  return prisma.user.findUniqueOrThrow({ where: { id: userId2 }, select: { organizationId: true, organization: { select: { name: true } } } });
+}
+router8.get("/team", handler(async (req, res) => {
+  const me = getAuthUser(req).sub;
+  const { organizationId, organization } = await myOrganization(me);
+  const members = await prisma.user.findMany({ where: { organizationId }, orderBy: { createdAt: "asc" } });
+  res.json({ organizationName: organization.name, members: members.map(serializeMember) });
+}));
+router8.post("/team", handler(async (req, res) => {
+  const me = getAuthUser(req).sub;
+  const { email, name, password } = req.body ?? {};
+  const cleanEmail = typeof email === "string" ? email.trim() : "";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return res.status(400).json({ error: "Email invalide." });
+  if (typeof name !== "string" || !name.trim()) return res.status(400).json({ error: "Nom requis." });
+  if (typeof password !== "string" || password.length < 8) {
+    return res.status(400).json({ error: "Le mot de passe doit contenir au moins 8 caract\xE8res." });
+  }
+  if (await prisma.user.findUnique({ where: { email: cleanEmail } })) {
+    return res.status(409).json({ error: "Un compte existe d\xE9j\xE0 avec cet email." });
+  }
+  const { organizationId } = await myOrganization(me);
+  const user = await prisma.user.create({
+    data: { email: cleanEmail, name: name.trim(), passwordHash: await hashPassword(password), role: "COMPTABLE", organizationId, createdById: me }
+  });
+  res.status(201).json(serializeMember(user));
+}));
+router8.post("/team/:id/delete", handler(async (req, res) => {
+  const me = getAuthUser(req).sub;
+  const id = identifier(req.params.id);
+  const target = id ? await prisma.user.findUnique({ where: { id }, select: { id: true, createdById: true } }) : null;
+  if (!target || target.createdById !== me) {
+    return res.status(404).json({ error: "Comptable introuvable parmi ceux que vous avez cr\xE9\xE9s." });
+  }
+  await prisma.$transaction([
+    prisma.clientDossier.updateMany({ where: { ownerId: target.id }, data: { ownerId: me } }),
+    // Les dossiers récupérés sont désormais les siens : une attribution à soi-même n'a plus de sens.
+    prisma.dossierAssignment.deleteMany({ where: { userId: me, dossier: { ownerId: me } } }),
+    prisma.user.delete({ where: { id: target.id } })
+  ]);
+  res.status(204).end();
+}));
+var team_default = router8;
+
+// server/routes/index.ts
+var router9 = Router9();
+router9.get("/bootstrap", handler(async (req, res) => {
   res.json(await buildBootstrapPayload(req));
 }));
-router8.use(dossiers_default);
-router8.use(entries_default);
-router8.use(notifications_default);
-router8.use(settings_default);
-router8.use(backup_default);
-router8.use(accounts_default);
-router8.use(invoices_default);
-var routes_default = router8;
+router9.use(dossiers_default);
+router9.use(entries_default);
+router9.use(notifications_default);
+router9.use(settings_default);
+router9.use(backup_default);
+router9.use(accounts_default);
+router9.use(team_default);
+router9.use(invoices_default);
+var routes_default = router9;
 
 // server/agentRoutes.ts
 init_db();
 init_mappers();
 init_initialSettings();
-import { Router as Router9 } from "express";
+import { Router as Router10 } from "express";
 
 // src/utils/analytics.ts
 init_syscohadaPlan();
@@ -3206,7 +3254,7 @@ async function analyzeWithGemini(input) {
 }
 
 // server/agentRoutes.ts
-var router9 = Router9();
+var router10 = Router10();
 var ENTRY_INCLUDE2 = { auditTrail: true, debitAccount: true, creditAccount: true };
 var INPUT_MODES2 = ["text", "voice", "photo", "mobile_money", "manual", "excel_import"];
 var ALLOWED_DOCUMENT_TYPES = /^(image\/(jpeg|png|webp|heic|heif)|application\/pdf)$/;
@@ -3216,12 +3264,11 @@ function handler2(fn) {
 async function loadContext(req, dossierId) {
   const user = getAuthUser(req);
   if (!user) return null;
-  const dossierRow = await prisma.clientDossier.findUnique({
-    where: { id: dossierId },
+  const dossierRow = await prisma.clientDossier.findFirst({
+    where: { id: dossierId, ...dossierScopeWhere(req) },
     include: { owner: { select: { name: true } } }
   });
   if (!dossierRow) return null;
-  if (!seesAllDossiers(user.role) && dossierRow.ownerId !== user.sub) return null;
   const [entryRows, settingsRow, userRow] = await Promise.all([
     prisma.journalEntry.findMany({
       where: { clientDossierId: dossierId, status: { not: "cancelled" } },
@@ -3256,7 +3303,7 @@ function reviewNote(entries, threshold) {
 
 ${notes.join("\n")}` : "";
 }
-router9.post("/chat", handler2(async (req, res) => {
+router10.post("/chat", handler2(async (req, res) => {
   const { dossierId, message = "", inputType = "text", pendingText, image } = req.body ?? {};
   if (typeof dossierId !== "string" || !String(message).trim() && !image) {
     return res.status(400).json({ error: "Dossier et message requis." });
@@ -3275,8 +3322,6 @@ router9.post("/chat", handler2(async (req, res) => {
   }
   const ctx = await loadContext(req, dossierId);
   if (!ctx) return res.status(404).json({ error: "Dossier introuvable." });
-  const user = getAuthUser(req);
-  const canWrite = user?.role !== "LECTURE_SEULE";
   const isFollowUp = typeof pendingText === "string" && pendingText && !isQuestion(message) && !isGreeting(message);
   const text2 = isFollowUp ? `${pendingText} ${message}`.trim() : String(message).trim();
   const analytics = buildAgentContext(ctx.entries, ctx.now);
@@ -3306,9 +3351,6 @@ router9.post("/chat", handler2(async (req, res) => {
   }
   if (outcome.intent === "question" && !outcome.reply) outcome.reply = answerQuestion(text2, analytics, ctx.dossier, ctx.settings);
   if (outcome.intent === "operation") {
-    if (!canWrite) {
-      return res.status(403).json({ error: "Votre profil est en lecture seule : je peux r\xE9pondre \xE0 vos questions mais pas enregistrer d'\xE9critures." });
-    }
     const entries = buildEntries(outcome.operations, { ctx, rawInput: String(message).trim() || text2, inputType: imagePayload ? "photo" : mode, source });
     if (entries.length === 0) {
       return res.json({ success: true, intent: "clarification", reply: "Je n'ai pas pu construire d'\xE9criture valide (montant manquant ou comptes identiques). Pouvez-vous reformuler avec le montant et le mode de paiement ?", entries: [], pendingText: text2, source });
@@ -3336,7 +3378,7 @@ router9.post("/chat", handler2(async (req, res) => {
   }
   return res.json({ success: true, intent: outcome.intent, reply: outcome.reply, entries: [], source });
 }));
-router9.post("/dossier-summary", handler2(async (req, res) => {
+router10.post("/dossier-summary", handler2(async (req, res) => {
   const ctx = await loadContext(req, String(req.body?.dossierId ?? ""));
   if (!ctx) return res.status(404).json({ error: "Dossier introuvable." });
   const a = buildAgentContext(ctx.entries, ctx.now);
@@ -3357,16 +3399,16 @@ router9.post("/dossier-summary", handler2(async (req, res) => {
     analytics: a
   });
 }));
-var agentRoutes_default = router9;
+var agentRoutes_default = router10;
 
 // server/authRoutes.ts
 init_db();
-import { Router as Router10 } from "express";
-var router10 = Router10();
+import { Router as Router11 } from "express";
+var router11 = Router11();
 function serializeUser(u) {
   return { id: u.id, email: u.email, name: u.name, role: u.role };
 }
-router10.post("/signup", async (req, res, next) => {
+router11.post("/signup", async (req, res, next) => {
   try {
     const { email, name, password } = req.body ?? {};
     if (!email || !name || !password) {
@@ -3380,9 +3422,8 @@ router10.post("/signup", async (req, res, next) => {
       return res.status(409).json({ error: "Un compte existe d\xE9j\xE0 avec cet email." });
     }
     const passwordHash = await hashPassword(password);
-    const isFirstUser = await prisma.user.count() === 0;
     const user = await prisma.user.create({
-      data: { email, name, passwordHash, role: isFirstUser ? "ADMIN" : "COMPTABLE" }
+      data: { email, name, passwordHash, role: "COMPTABLE", organization: { create: { name } } }
     });
     const token = signToken({ sub: user.id, email: user.email, role: user.role });
     res.cookie(COOKIE_NAME, token, COOKIE_OPTIONS);
@@ -3391,7 +3432,7 @@ router10.post("/signup", async (req, res, next) => {
     next(e);
   }
 });
-router10.post("/login", async (req, res, next) => {
+router11.post("/login", async (req, res, next) => {
   try {
     const { email, password } = req.body ?? {};
     if (!email || !password) {
@@ -3408,11 +3449,27 @@ router10.post("/login", async (req, res, next) => {
     next(e);
   }
 });
-router10.post("/logout", (_req, res) => {
+router11.post("/logout", (_req, res) => {
   res.clearCookie(COOKIE_NAME, { ...COOKIE_OPTIONS, maxAge: void 0 });
   res.status(204).end();
 });
-router10.get("/me", async (req, res, next) => {
+router11.post("/change-password", requireAuth, async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body ?? {};
+    if (typeof newPassword !== "string" || newPassword.length < 8) {
+      return res.status(400).json({ error: "Le nouveau mot de passe doit contenir au moins 8 caract\xE8res." });
+    }
+    const user = await prisma.user.findUnique({ where: { id: getAuthUser(req).sub } });
+    if (!user || typeof currentPassword !== "string" || !await verifyPassword(currentPassword, user.passwordHash)) {
+      return res.status(400).json({ error: "Mot de passe actuel incorrect." });
+    }
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(newPassword) } });
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
+});
+router11.get("/me", async (req, res, next) => {
   try {
     const token = req.cookies?.[COOKIE_NAME];
     const payload = token ? verifyToken(token) : null;
@@ -3428,13 +3485,13 @@ router10.get("/me", async (req, res, next) => {
     next(e);
   }
 });
-var authRoutes_default = router10;
+var authRoutes_default = router11;
 
 // server/adminRoutes.ts
 init_db();
-import { Router as Router11 } from "express";
-var router11 = Router11();
-var ROLES = ["ADMIN", "CHEF_COMPTABLE", "DAF", "COMPTABLE", "LECTURE_SEULE"];
+import { Router as Router12 } from "express";
+var router12 = Router12();
+var ROLES = ["ADMIN", "COMPTABLE"];
 function requireAdmin(req, res, next) {
   const user = req.user;
   if (!user || user.role !== "ADMIN") {
@@ -3443,22 +3500,23 @@ function requireAdmin(req, res, next) {
   next();
 }
 function serializeUser2(u) {
-  return { id: u.id, email: u.email, name: u.name, role: u.role, createdAt: u.createdAt.toISOString() };
+  return { id: u.id, email: u.email, name: u.name, role: u.role, createdAt: u.createdAt.toISOString(), organizationName: u.organization?.name };
 }
+var WITH_ORG = { organization: { select: { name: true } } };
 function validId(value) {
   if (typeof value !== "string") return null;
   return /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null;
 }
-router11.use(requireAdmin);
-router11.get("/users", async (_req, res, next) => {
+router12.use(requireAdmin);
+router12.get("/users", async (_req, res, next) => {
   try {
-    const users = await prisma.user.findMany({ orderBy: { createdAt: "asc" } });
+    const users = await prisma.user.findMany({ orderBy: { createdAt: "asc" }, include: WITH_ORG });
     res.json(users.map(serializeUser2));
   } catch (e) {
     next(e);
   }
 });
-router11.post("/users", async (req, res, next) => {
+router12.post("/users", async (req, res, next) => {
   try {
     const { email, name, password, role } = req.body ?? {};
     if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -3478,13 +3536,13 @@ router11.post("/users", async (req, res, next) => {
       return res.status(409).json({ error: "Un compte existe d\xE9j\xE0 avec cet email." });
     }
     const passwordHash = await hashPassword(password);
-    const user = await prisma.user.create({ data: { email, name: name.trim(), passwordHash, role } });
+    const user = await prisma.user.create({ data: { email, name: name.trim(), passwordHash, role, organization: { create: { name: name.trim() } } }, include: WITH_ORG });
     res.status(201).json(serializeUser2(user));
   } catch (e) {
     next(e);
   }
 });
-router11.post("/users/:id/role", async (req, res, next) => {
+router12.post("/users/:id/role", async (req, res, next) => {
   try {
     const id = validId(req.params.id);
     if (!id) return res.status(400).json({ error: "Identifiant utilisateur invalide." });
@@ -3496,13 +3554,13 @@ router11.post("/users/:id/role", async (req, res, next) => {
     if (id === requester.sub && role !== "ADMIN") {
       return res.status(400).json({ error: "Vous ne pouvez pas retirer votre propre r\xF4le administrateur." });
     }
-    const updated = await prisma.user.update({ where: { id }, data: { role } });
+    const updated = await prisma.user.update({ where: { id }, data: { role }, include: WITH_ORG });
     res.json(serializeUser2(updated));
   } catch (e) {
     next(e);
   }
 });
-router11.post("/users/:id/password", async (req, res, next) => {
+router12.post("/users/:id/password", async (req, res, next) => {
   try {
     const id = validId(req.params.id);
     if (!id) return res.status(400).json({ error: "Identifiant utilisateur invalide." });
@@ -3510,13 +3568,13 @@ router11.post("/users/:id/password", async (req, res, next) => {
     if (typeof password !== "string" || password.length < 8) {
       return res.status(400).json({ error: "Le mot de passe doit contenir au moins 8 caract\xE8res." });
     }
-    const updated = await prisma.user.update({ where: { id }, data: { passwordHash: await hashPassword(password) } });
+    const updated = await prisma.user.update({ where: { id }, data: { passwordHash: await hashPassword(password) }, include: WITH_ORG });
     res.json(serializeUser2(updated));
   } catch (e) {
     next(e);
   }
 });
-router11.post("/users/:id/delete", async (req, res, next) => {
+router12.post("/users/:id/delete", async (req, res, next) => {
   try {
     const id = validId(req.params.id);
     if (!id) return res.status(400).json({ error: "Identifiant utilisateur invalide." });
@@ -3530,7 +3588,7 @@ router11.post("/users/:id/delete", async (req, res, next) => {
     next(e);
   }
 });
-var adminRoutes_default = router11;
+var adminRoutes_default = router12;
 
 // server/app.ts
 var app = express();
@@ -3568,18 +3626,6 @@ app.get("/api/health", (req, res) => {
   });
 });
 app.use("/api", requireAuth);
-app.use("/api", (req, res, next) => {
-  const role = req.user?.role;
-  const isReadMethod = ["GET", "HEAD", "OPTIONS"].includes(req.method);
-  const isAgentQuestion = req.path.startsWith("/agent/");
-  if (role === "LECTURE_SEULE" && !isReadMethod && !isAgentQuestion) {
-    return res.status(403).json({ error: "Votre profil est en lecture seule : modification impossible." });
-  }
-  if (role === "ADMIN" && !req.path.startsWith("/admin/")) {
-    return res.status(403).json({ error: "Le compte administrateur g\xE8re les utilisateurs depuis /admin uniquement." });
-  }
-  next();
-});
 app.use("/api/agent", agentRoutes_default);
 app.use("/api", routes_default);
 app.use("/api/admin", adminRoutes_default);

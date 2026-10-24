@@ -12,7 +12,7 @@ import { analyzeWithGemini, getGenAI, modelFromSettings } from './agent/gemini';
 import { isGreeting, isQuestion, parseWithHeuristics } from './agent/heuristic';
 import type { AgentRequestContext, ParseOutcome } from './agent/types';
 import { getAuthUser } from './auth';
-import { seesAllDossiers } from './access';
+import { dossierScopeWhere } from './access';
 
 const router = Router();
 const ENTRY_INCLUDE = { auditTrail: true, debitAccount: true, creditAccount: true } as const;
@@ -25,19 +25,18 @@ function handler(fn: (req: Request, res: Response) => Promise<any>) {
 
 /**
  * Charge le contexte d'un dossier pour l'agent, en vérifiant au préalable que
- * l'utilisateur en session y a accès (propriétaire, ou administrateur).
+ * l'utilisateur en session y a accès (dossier créé ou attribué).
  * Retourne null si le dossier est inexistant ou hors périmètre (réponse 404).
  */
 async function loadContext(req: Request, dossierId: string): Promise<AgentRequestContext | null> {
   const user = getAuthUser(req);
   if (!user) return null;
 
-  const dossierRow = await prisma.clientDossier.findUnique({
-    where: { id: dossierId },
+  const dossierRow = await prisma.clientDossier.findFirst({
+    where: { id: dossierId, ...dossierScopeWhere(req) },
     include: { owner: { select: { name: true } } },
   });
   if (!dossierRow) return null;
-  if (!seesAllDossiers(user.role) && dossierRow.ownerId !== user.sub) return null;
 
   const [entryRows, settingsRow, userRow] = await Promise.all([
     prisma.journalEntry.findMany({
@@ -98,9 +97,6 @@ router.post('/chat', handler(async (req, res) => {
   const ctx = await loadContext(req, dossierId);
   if (!ctx) return res.status(404).json({ error: 'Dossier introuvable.' });
 
-  const user = getAuthUser(req);
-  const canWrite = user?.role !== 'LECTURE_SEULE';
-
   // La réponse à une demande de précision complète le message précédent ; une question ou un bonjour, non.
   const isFollowUp = typeof pendingText === 'string' && pendingText && !isQuestion(message) && !isGreeting(message);
   const text: string = isFollowUp ? `${pendingText} ${message}`.trim() : String(message).trim();
@@ -142,9 +138,6 @@ router.post('/chat', handler(async (req, res) => {
   if (outcome.intent === 'question' && !outcome.reply) outcome.reply = answerQuestion(text, analytics, ctx.dossier, ctx.settings);
 
   if (outcome.intent === 'operation') {
-    if (!canWrite) {
-      return res.status(403).json({ error: "Votre profil est en lecture seule : je peux répondre à vos questions mais pas enregistrer d'écritures." });
-    }
     const entries = buildEntries(outcome.operations, { ctx, rawInput: String(message).trim() || text, inputType: imagePayload ? 'photo' : mode, source });
     if (entries.length === 0) {
       return res.json({ success: true, intent: 'clarification', reply: "Je n'ai pas pu construire d'écriture valide (montant manquant ou comptes identiques). Pouvez-vous reformuler avec le montant et le mode de paiement ?", entries: [], pendingText: text, source });

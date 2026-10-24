@@ -15,11 +15,8 @@ enum RegimeFiscal {
 }
 
 enum UserRole {
-  ADMIN
-  CHEF_COMPTABLE // validation + dévalidation / annulation
-  DAF // validation définitive
-  COMPTABLE // saisie uniquement
-  LECTURE_SEULE
+  ADMIN // concepteurs : espace /admin + espace comptable de leur entreprise
+  COMPTABLE // toutes les fonctionnalités sur ses dossiers (créés ou attribués)
 }
 
 enum AccountCategory {
@@ -143,9 +140,32 @@ model ClientDossier {
   notifications  AppNotification[]
   accounts       SyscohadaAccount[]
   invoices       Invoice[]
+  assignments    DossierAssignment[]
 
   @@index([ownerId])
   @@map("client_dossiers")
+}
+
+// Dossier attribué par son créateur à un autre comptable de la même entreprise.
+model DossierAssignment {
+  dossierId String
+  dossier   ClientDossier @relation(fields: [dossierId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+
+  @@id([dossierId, userId])
+  @@index([userId])
+  @@map("dossier_assignments")
+}
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  users     User[]
+
+  @@map("organizations")
 }
 
 // dossierId null = plan SYSCOHADA standard ; sinon compte propre à un dossier.
@@ -275,8 +295,18 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  // Un dossier comptable appartient à un seul utilisateur (cloisonnement des données).
-  dossiers ClientDossier[] @relation("UserDossiers")
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // Comptable qui a créé ce compte (null : inscription publique ou création par l'admin).
+  createdById    String?
+  createdBy      User?        @relation("CreatedUsers", fields: [createdById], references: [id], onDelete: SetNull)
+  createdUsers   User[]       @relation("CreatedUsers")
+
+  // Dossiers créés (propriétaire) et dossiers attribués.
+  dossiers    ClientDossier[]     @relation("UserDossiers")
+  assignments DossierAssignment[]
+
+  @@index([organizationId])
 
   @@map("users")
 }

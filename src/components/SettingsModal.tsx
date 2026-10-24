@@ -4,6 +4,8 @@ import { useTheme } from '../context/ThemeContext';
 import { soundManager, SOUND_OPTIONS, SoundType } from '../utils/sound';
 import { deviceNotificationStatus, requestDeviceNotifications } from '../utils/deviceNotify';
 import { OHADA_COUNTRIES, ACTIVITY_SECTORS, FISCAL_REGIMES } from '../data/initialSettings';
+import { CurrentUser } from '../utils/authApi';
+import { AccountTeamPanel } from './settings/AccountTeamPanel';
 import { 
   Settings, 
   X, 
@@ -50,6 +52,8 @@ interface SettingsModalProps {
   onDeleteDossier: (dossierId: string) => void;
   onSelectDossier: (dossier: ClientDossier) => void;
   onImportBackup?: (backupData: { dossiers: ClientDossier[]; entries: JournalEntry[]; settings: PlatformSettings }) => void;
+  currentUser: CurrentUser;
+  onDossierChanged: (dossier: ClientDossier) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -64,12 +68,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onUpdateDossier,
   onDeleteDossier,
   onSelectDossier,
-  onImportBackup
+  onImportBackup,
+  currentUser,
+  onDossierChanged
 }) => {
   const { isDark } = useTheme();
 
   // Active tab in Settings
-  const [activeTab, setActiveTab] = useState<'dossiers' | 'syscohada' | 'ai' | 'audio' | 'display' | 'backup'>('dossiers');
+  const [activeTab, setActiveTab] = useState<'dossiers' | 'compte' | 'syscohada' | 'ai' | 'audio' | 'display' | 'backup'>('dossiers');
 
   // Search filter for dossiers
   const [dossierSearch, setDossierSearch] = useState('');
@@ -352,6 +358,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </button>
 
             <button
+              onClick={() => setActiveTab('compte')}
+              className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 shrink-0 ${
+                activeTab === 'compte'
+                  ? 'bg-[#7024E3] text-white shadow-xs'
+                  : 'text-[#534674] dark:text-[#C4B5FD] hover:bg-[#EDE9FE] dark:hover:bg-[#28154B]'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4" />
+              <span>Compte & équipe</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('syscohada')}
               className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 shrink-0 ${
                 activeTab === 'syscohada'
@@ -538,13 +556,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                             <button
                               onClick={() => setDossierToDelete(dossier)}
-                              disabled={dossiers.length <= 1}
+                              disabled={dossiers.length <= 1 || dossier.ownerId !== currentUser.id}
                               className={`p-2 rounded-xl border transition-colors ${
-                                dossiers.length <= 1
+                                dossiers.length <= 1 || dossier.ownerId !== currentUser.id
                                   ? 'opacity-40 cursor-not-allowed border-gray-200 dark:border-gray-800 text-gray-400'
                                   : 'bg-white dark:bg-[#1A0E34] border-[#FEE2E2] dark:border-[#4B1924] text-[#EF4444] hover:bg-[#FEE2E2] dark:hover:bg-[#4B1924]'
                               }`}
-                              title={dossiers.length <= 1 ? "Impossible de supprimer le seul dossier restant" : "Supprimer ce projet"}
+                              title={dossier.ownerId !== currentUser.id ? "Seul le créateur du dossier peut le supprimer" : dossiers.length <= 1 ? "Impossible de supprimer le seul dossier restant" : "Supprimer ce projet"}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -558,6 +576,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
 
             {/* ================= TAB 2: NORMES SYSCOHADA & FISCALITÉ ================= */}
+            {activeTab === 'compte' && (
+              <AccountTeamPanel currentUser={currentUser} dossiers={dossiers} onDossierChanged={onDossierChanged} />
+            )}
+
             {activeTab === 'syscohada' && (
               <div className="space-y-6">
                 <div>

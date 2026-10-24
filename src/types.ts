@@ -42,7 +42,7 @@ export interface JournalEntry {
   explanationSimplified: string;
   paymentMethod: PaymentMethod;
   auditTrail: AuditLog[];
-  // Renseignés par le serveur (séparation des tâches)
+  // Renseignés par le serveur (piste d'audit)
   createdById?: string;
   updatedById?: string;
   validatedById?: string;
@@ -129,10 +129,12 @@ export interface InvoiceInput {
 
 export interface ClientDossier {
   id: string;
-  /** Identifiant du compte propriétaire du dossier (cloisonnement des données). */
+  /** Identifiant du créateur du dossier (seul à pouvoir le supprimer et gérer ses attributions). */
   ownerId: string;
-  /** Nom du propriétaire, renseigné côté serveur pour l'affichage cabinet (admin). */
+  /** Nom du créateur, renseigné côté serveur. */
   ownerName?: string;
+  /** Comptables à qui le créateur a attribué ce dossier. */
+  assignees?: { id: string; name: string }[];
   name: string;
   managerName: string;
   phone: string;

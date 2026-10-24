@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { prisma } from './db';
-import { hashPassword, verifyPassword, signToken, verifyToken, COOKIE_NAME, COOKIE_OPTIONS } from './auth';
+import { hashPassword, verifyPassword, signToken, verifyToken, requireAuth, getAuthUser, COOKIE_NAME, COOKIE_OPTIONS } from './auth';
 
 const router = Router();
 
@@ -24,11 +24,9 @@ router.post('/signup', async (req, res, next) => {
     }
 
     const passwordHash = await hashPassword(password);
-    // Le tout premier compte créé sur l'instance devient administrateur.
-    const isFirstUser = (await prisma.user.count()) === 0;
-
+    // L'inscription publique crée toujours un comptable, avec sa propre entreprise.
     const user = await prisma.user.create({
-      data: { email, name, passwordHash, role: isFirstUser ? 'ADMIN' : 'COMPTABLE' },
+      data: { email, name, passwordHash, role: 'COMPTABLE', organization: { create: { name } } },
     });
 
     const token = signToken({ sub: user.id, email: user.email, role: user.role });
@@ -62,6 +60,24 @@ router.post('/login', async (req, res, next) => {
 router.post('/logout', (_req, res) => {
   res.clearCookie(COOKIE_NAME, { ...COOKIE_OPTIONS, maxAge: undefined });
   res.status(204).end();
+});
+
+/** Changement de son propre mot de passe (admin comme comptable). */
+router.post('/change-password', requireAuth, async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body ?? {};
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      return res.status(400).json({ error: 'Le nouveau mot de passe doit contenir au moins 8 caractères.' });
+    }
+    const user = await prisma.user.findUnique({ where: { id: getAuthUser(req)!.sub } });
+    if (!user || typeof currentPassword !== 'string' || !(await verifyPassword(currentPassword, user.passwordHash))) {
+      return res.status(400).json({ error: 'Mot de passe actuel incorrect.' });
+    }
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(newPassword) } });
+    res.status(204).end();
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.get('/me', async (req, res, next) => {

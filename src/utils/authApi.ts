@@ -2,7 +2,7 @@ export interface CurrentUser {
   id: string;
   email: string;
   name: string;
-  role: 'ADMIN' | 'CHEF_COMPTABLE' | 'DAF' | 'COMPTABLE' | 'LECTURE_SEULE';
+  role: 'ADMIN' | 'COMPTABLE';
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -30,4 +30,6 @@ export const authApi = {
   signup: (email: string, name: string, password: string) =>
     request<CurrentUser>('/signup', { method: 'POST', body: JSON.stringify({ email, name, password }) }),
   logout: () => request<void>('/logout', { method: 'POST' }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>('/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
 };

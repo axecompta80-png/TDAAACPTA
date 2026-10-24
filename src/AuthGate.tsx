@@ -32,11 +32,6 @@ export default function AuthGate() {
     );
   }
 
-  if (user.role === 'ADMIN') {
-    window.location.replace('/admin');
-    return <Preload />;
-  }
-
   return (
     <App
       currentUser={user}

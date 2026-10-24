@@ -2,14 +2,14 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { serializeDossier, REGIME_FISCAL_TO_DB } from '../mappers';
 import { getAuthUser } from '../auth';
-import { dossierScopeWhere, findAccessibleDossier } from '../access';
+import { dossierScopeWhere, findAccessibleDossier, ownsDossier } from '../access';
 import { handler } from '../http';
 import { validateDossierInput, identifier, unwrap } from '../validation';
 import { DOSSIER_INCLUDE, ENTRY_INCLUDE } from './bootstrap';
 
 const router = Router();
 
-/** Dossiers visibles par le requérant (les siens, ou tous pour un administrateur). */
+/** Dossiers visibles par le requérant (créés par lui ou qui lui sont attribués). */
 router.get('/dossiers', handler(async (req, res) => {
   const rows = await prisma.clientDossier.findMany({
     where: dossierScopeWhere(req) as any,
@@ -93,15 +93,60 @@ router.post('/dossiers/:id/update', handler(async (req, res) => {
   res.json(serializeDossier(updated));
 }));
 
-/** Suppression d'un dossier : POST /dossiers/:id/delete (cascade sur écritures et notifications). */
+/** Suppression d'un dossier par son créateur : POST /dossiers/:id/delete (cascade sur écritures et notifications). */
 router.post('/dossiers/:id/delete', handler(async (req, res) => {
   const id = identifier(req.params.id);
   if (!id) return res.status(400).json({ error: 'Identifiant de dossier invalide.' });
   const existing = await findAccessibleDossier(req, id);
   if (!existing) return res.status(404).json({ error: 'Dossier introuvable.' });
+  if (!(await ownsDossier(req, id))) return res.status(403).json({ error: 'Seul le créateur du dossier peut le supprimer.' });
 
   await prisma.clientDossier.delete({ where: { id: id } });
   res.status(204).end();
+}));
+
+/**
+ * Attributions : le créateur du dossier l'attribue à un comptable de son entreprise,
+ * ou retire cette attribution. Réponse : le dossier à jour.
+ */
+async function assignmentGuard(req: any, res: any): Promise<string | null> {
+  const id = identifier(req.params.id);
+  const dossier = id ? await findAccessibleDossier(req, id) : null;
+  if (!dossier) { res.status(404).json({ error: 'Dossier introuvable.' }); return null; }
+  if (dossier.ownerId !== getAuthUser(req)!.sub) {
+    res.status(403).json({ error: 'Seul le créateur du dossier peut gérer ses attributions.' });
+    return null;
+  }
+  return dossier.id;
+}
+
+router.post('/dossiers/:id/assignments', handler(async (req, res) => {
+  const dossierId = await assignmentGuard(req, res);
+  if (!dossierId) return;
+  const me = getAuthUser(req)!.sub;
+  const targetId = identifier((req.body ?? {}).userId);
+  if (!targetId || targetId === me) return res.status(400).json({ error: 'Comptable invalide.' });
+  const [self, target] = await Promise.all([
+    prisma.user.findUnique({ where: { id: me }, select: { organizationId: true } }),
+    prisma.user.findUnique({ where: { id: targetId }, select: { organizationId: true } }),
+  ]);
+  if (!target || target.organizationId !== self?.organizationId) {
+    return res.status(404).json({ error: 'Comptable introuvable dans votre entreprise.' });
+  }
+  await prisma.dossierAssignment.upsert({
+    where: { dossierId_userId: { dossierId, userId: targetId } },
+    create: { dossierId, userId: targetId },
+    update: {},
+  });
+  res.json(serializeDossier(await prisma.clientDossier.findUnique({ where: { id: dossierId }, include: DOSSIER_INCLUDE })));
+}));
+
+router.post('/dossiers/:id/assignments/:userId/delete', handler(async (req, res) => {
+  const dossierId = await assignmentGuard(req, res);
+  if (!dossierId) return;
+  const userId = identifier(req.params.userId);
+  if (userId) await prisma.dossierAssignment.deleteMany({ where: { dossierId, userId } });
+  res.json(serializeDossier(await prisma.clientDossier.findUnique({ where: { id: dossierId }, include: DOSSIER_INCLUDE })));
 }));
 
 export default router;

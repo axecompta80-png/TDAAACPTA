@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ShieldCheck, Trash2, LogOut, UserPlus, X, KeyRound } from 'lucide-react';
+import { ShieldCheck, Trash2, LogOut, UserPlus, X, KeyRound, Calculator } from 'lucide-react';
 import { BrandLogo } from '../components/BrandLogo';
 import { CurrentUser, authApi } from '../utils/authApi';
 import { adminApi, ManagedUser, NewUserInput } from '../utils/adminApi';
@@ -11,10 +11,7 @@ interface AdminPageProps {
 
 const roleLabel: Record<ManagedUser['role'], string> = {
   ADMIN: 'Administrateur',
-  CHEF_COMPTABLE: 'Chef comptable',
-  DAF: 'DAF',
-  COMPTABLE: 'Comptable (saisie)',
-  LECTURE_SEULE: 'Lecture seule',
+  COMPTABLE: 'Comptable',
 };
 
 const emptyNewUser: NewUserInput = { email: '', name: '', password: '', role: 'COMPTABLE' };
@@ -99,6 +96,13 @@ export const AdminPage: React.FC<AdminPageProps> = ({ currentUser, onLogout }) =
           </div>
 
           <div className="flex items-center gap-2">
+            <a
+              href="/"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-[#7024E3] to-[#8B5CF6] text-white text-xs font-bold hover:opacity-90 transition-opacity"
+            >
+              <Calculator className="w-4 h-4" />
+              <span>Espace comptable</span>
+            </a>
             <button
               onClick={onLogout}
               className="p-2.5 rounded-xl border border-[#DDD6FE] bg-[#F5F3FF] text-[#7024E3] hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all"
@@ -213,6 +217,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({ currentUser, onLogout }) =
                 <tr className="bg-[#1E084A] text-white uppercase font-mono text-xs">
                   <th className="p-4">Utilisateur</th>
                   <th className="p-4">Email</th>
+                  <th className="p-4">Entreprise</th>
                   <th className="p-4">Rôle</th>
                   <th className="p-4">Créé le</th>
                   <th className="p-4 text-right">Action</th>
@@ -221,13 +226,13 @@ export const AdminPage: React.FC<AdminPageProps> = ({ currentUser, onLogout }) =
               <tbody className="divide-y divide-[#EDE9FE]">
                 {!isLoaded && (
                   <tr>
-                    <td colSpan={5} className="p-6 text-center text-[#7C709A]">Chargement…</td>
+                    <td colSpan={6} className="p-6 text-center text-[#7C709A]">Chargement…</td>
                   </tr>
                 )}
 
                 {isLoaded && users.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="p-6 text-center text-[#7C709A]">Aucun utilisateur.</td>
+                    <td colSpan={6} className="p-6 text-center text-[#7C709A]">Aucun utilisateur.</td>
                   </tr>
                 )}
 
@@ -244,6 +249,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({ currentUser, onLogout }) =
                         )}
                       </td>
                       <td className="p-4 text-[#534674] font-mono text-xs">{u.email}</td>
+                      <td className="p-4 text-[#534674] text-xs">{u.organizationName ?? '—'}</td>
                       <td className="p-4">
                         <select
                           value={u.role}

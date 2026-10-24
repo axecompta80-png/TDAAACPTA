@@ -38,6 +38,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export interface TeamMember {
+  id: string;
+  name: string;
+  email: string;
+  role: 'ADMIN' | 'COMPTABLE';
+  createdById: string | null;
+  createdAt: string;
+}
+
 export const api = {
   getBootstrap: () => request<BootstrapData>('/bootstrap'),
 
@@ -89,6 +98,13 @@ export const api = {
   // Réglages de la plateforme
   updateSettings: (settings: PlatformSettings) =>
     request<PlatformSettings>('/settings/update', { method: 'POST', body: JSON.stringify(settings) }),
+
+  // Équipe de l'entreprise et attribution des dossiers
+  getTeam: () => request<{ organizationName: string; members: TeamMember[] }>('/team'),
+  createTeamMember: (data: { name: string; email: string; password: string }) => request<TeamMember>('/team', post(data)),
+  deleteTeamMember: (id: string) => request<void>(`/team/${id}/delete`, post()),
+  assignDossier: (dossierId: string, userId: string) => request<ClientDossier>(`/dossiers/${dossierId}/assignments`, post({ userId })),
+  unassignDossier: (dossierId: string, userId: string) => request<ClientDossier>(`/dossiers/${dossierId}/assignments/${userId}/delete`, post()),
 
   // Sauvegarde / restauration (périmètre de l'utilisateur connecté)
   importBackup: (backup: { settings?: PlatformSettings; dossiers?: ClientDossier[]; entries?: JournalEntry[] }) =>

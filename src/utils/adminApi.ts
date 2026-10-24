@@ -2,8 +2,9 @@ export interface ManagedUser {
   id: string;
   email: string;
   name: string;
-  role: 'ADMIN' | 'CHEF_COMPTABLE' | 'DAF' | 'COMPTABLE' | 'LECTURE_SEULE';
+  role: 'ADMIN' | 'COMPTABLE';
   createdAt: string;
+  organizationName?: string;
 }
 
 /**

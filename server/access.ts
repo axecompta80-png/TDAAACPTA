@@ -5,40 +5,37 @@ import { getAuthUser } from './auth';
 /**
  * Règles de cloisonnement des données AxeCompta.
  *
- * - Un utilisateur classique ne voit et ne modifie que les dossiers qu'il a créés,
- *   ainsi que les écritures et notifications rattachées à ces dossiers.
- * - L'administrateur (concepteurs de la plateforme) est à part : il gère les comptes
- *   utilisateurs via /api/admin et n'a accès à aucune donnée comptable.
+ * - Deux rôles : COMPTABLE et ADMIN. L'admin a en plus l'espace /admin ; dans l'espace
+ *   comptable il est soumis exactement aux mêmes règles qu'un comptable.
+ * - Un utilisateur voit les dossiers qu'il a créés et ceux qui lui ont été attribués,
+ *   rien d'autre (même au sein de son entreprise). Sur ces dossiers, il a tous les droits :
+ *   saisie, validation, dévalidation, annulation, facturation.
+ * - Supprimer un dossier et gérer ses attributions restent réservés à son créateur.
  *
  * Toute autorisation est évaluée côté serveur à partir de la session, jamais d'un
  * identifiant transmis par le client.
  */
 
-export function isAdminRequest(req: Request): boolean {
-  return getAuthUser(req)?.role === 'ADMIN';
+const NONE = { id: '__aucun__' }; // jamais satisfait : requête non authentifiée
+
+/** Drapeau `where` Prisma restreignant la lecture aux dossiers visibles par le requérant. */
+export function dossierScopeWhere(req: Request): Record<string, unknown> {
+  const user = getAuthUser(req);
+  if (!user) return NONE;
+  return { OR: [{ ownerId: user.sub }, { assignments: { some: { userId: user.sub } } }] };
 }
 
-/**
- * Rôles comptables :
- * - COMPTABLE : saisie (brouillon / en attente), voit ses propres dossiers ;
- * - DAF : validation définitive, voit tous les dossiers ;
- * - CHEF_COMPTABLE : validation + dévalidation / annulation, voit tous les dossiers ;
- */
-export function seesAllDossiers(role?: string): boolean {
-  return role === 'DAF' || role === 'CHEF_COMPTABLE';
-}
-export function canValidate(role?: string): boolean {
-  return role === 'DAF' || role === 'CHEF_COMPTABLE';
-}
-export function canUnvalidate(role?: string): boolean {
-  return role === 'CHEF_COMPTABLE';
+/** Drapeau `where` pour les écritures visibles (rattachées à un dossier accessible). */
+export function entryScopeWhere(req: Request): Record<string, unknown> {
+  return { clientDossier: dossierScopeWhere(req) };
 }
 
-/**
- * Entrepreneur seul : le propriétaire d'un dossier a tous les droits dessus
- * (validation, dévalidation, annulation). La séparation des tâches ne s'applique
- * qu'aux autres intervenants du dossier.
- */
+/** Drapeau `where` pour les notifications visibles. */
+export function notificationScopeWhere(req: Request): Record<string, unknown> {
+  return { dossier: dossierScopeWhere(req) };
+}
+
+/** Le requérant a-t-il créé ce dossier ? (suppression, attributions) */
 export async function ownsDossier(req: Request, dossierId: string): Promise<boolean> {
   const user = getAuthUser(req);
   if (!user) return false;
@@ -54,49 +51,17 @@ export async function actorName(req: Request): Promise<string> {
   return row?.name ?? user.email;
 }
 
-/** Drapeau `where` Prisma restreignant la lecture aux dossiers visibles par le requérant. */
-export function dossierScopeWhere(req: Request): Record<string, unknown> {
-  const user = getAuthUser(req);
-  if (!user) return { ownerId: '__aucun__' }; // jamais satisfait : requête non authentifiée
-  return seesAllDossiers(user.role) ? {} : { ownerId: user.sub };
-}
-
-/** Drapeau `where` pour les écritures visibles (rattachées à un dossier accessible). */
-export function entryScopeWhere(req: Request): Record<string, unknown> {
-  const user = getAuthUser(req);
-  if (!user) return { clientDossier: { ownerId: '__aucun__' } };
-  return seesAllDossiers(user.role) ? {} : { clientDossier: { ownerId: user.sub } };
-}
-
-/** Drapeau `where` pour les notifications visibles. */
-export function notificationScopeWhere(req: Request): Record<string, unknown> {
-  const user = getAuthUser(req);
-  if (!user) return { dossier: { ownerId: '__aucun__' } };
-  return seesAllDossiers(user.role) ? {} : { dossier: { ownerId: user.sub } };
-}
-
 /**
  * Charge un dossier uniquement s'il est accessible au requérant.
  * Retourne null si le dossier est inexistant ou hors périmètre (réponse 404 côté routeur).
  */
 export async function findAccessibleDossier(req: Request, dossierId: string) {
-  const user = getAuthUser(req);
-  if (!user) return null;
-  const dossier = await prisma.clientDossier.findUnique({ where: { id: dossierId } });
-  if (!dossier) return null;
-  if (!seesAllDossiers(user.role) && dossier.ownerId !== user.sub) return null;
-  return dossier;
+  if (!getAuthUser(req)) return null;
+  return prisma.clientDossier.findFirst({ where: { id: dossierId, ...dossierScopeWhere(req) } });
 }
 
-/** Vérifie qu'une écriture est accessible, et la retourne avec son dossier. */
+/** Vérifie qu'une écriture est accessible, et la retourne. */
 export async function findAccessibleEntry(req: Request, entryId: string) {
-  const user = getAuthUser(req);
-  if (!user) return null;
-  const entry = await prisma.journalEntry.findUnique({ where: { id: entryId } });
-  if (!entry) return null;
-  if (!seesAllDossiers(user.role)) {
-    const dossier = await prisma.clientDossier.findUnique({ where: { id: entry.clientDossierId } });
-    if (!dossier || dossier.ownerId !== user.sub) return null;
-  }
-  return entry;
+  if (!getAuthUser(req)) return null;
+  return prisma.journalEntry.findFirst({ where: { id: entryId, ...entryScopeWhere(req) } });
 }

@@ -8,6 +8,7 @@ import settingsRouter from './settings';
 import backupRouter from './backup';
 import accountsRouter from './accounts';
 import invoicesRouter from './invoices';
+import teamRouter from './team';
 
 /**
  * Routes applicatives AxeCompta (données comptables).
@@ -28,6 +29,7 @@ router.use(notificationsRouter);
 router.use(settingsRouter);
 router.use(backupRouter);
 router.use(accountsRouter);
+router.use(teamRouter);
 router.use(invoicesRouter);
 
 export default router;

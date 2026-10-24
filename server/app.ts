@@ -76,21 +76,6 @@ app.get('/api/health', (req: Request, res: Response) => {
 // Tout ce qui suit nécessite une session valide
 app.use('/api', requireAuth);
 
-// Profil "lecture seule" : consultation uniquement (les questions à l'agent restent permises)
-app.use('/api', (req: Request, res: Response, next: NextFunction) => {
-  const role = (req as any).user?.role;
-  const isReadMethod = ['GET', 'HEAD', 'OPTIONS'].includes(req.method);
-  const isAgentQuestion = req.path.startsWith('/agent/');
-  if (role === 'LECTURE_SEULE' && !isReadMethod && !isAgentQuestion) {
-    return res.status(403).json({ error: 'Votre profil est en lecture seule : modification impossible.' });
-  }
-  // L'administrateur (concepteurs) gère uniquement les comptes : aucun accès aux données comptables.
-  if (role === 'ADMIN' && !req.path.startsWith('/admin/')) {
-    return res.status(403).json({ error: "Le compte administrateur gère les utilisateurs depuis /admin uniquement." });
-  }
-  next();
-});
-
 // Agent IA : saisie en langage naturel, photos/PDF, SMS Mobile Money, questions, résumés de dossier
 app.use('/api/agent', agentRoutes);
 

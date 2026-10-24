@@ -1,7 +1,7 @@
 import { Router, Request } from 'express';
 import { prisma } from '../db';
 import { serializeEntry } from '../mappers';
-import { findAccessibleDossier, findAccessibleEntry, canValidate, canUnvalidate, actorName, ownsDossier } from '../access';
+import { findAccessibleDossier, findAccessibleEntry, actorName } from '../access';
 import { getAuthUser } from '../auth';
 import { handler } from '../http';
 import { validateEntryInput, identifier, optionalReason, EntryInput, unwrap } from '../validation';
@@ -27,23 +27,18 @@ export async function assertAccountsUsable(codes: string[], dossierId: string): 
   return missing.length ? `Compte inconnu ou inactif pour ce dossier : ${missing.join(', ')}.` : null;
 }
 
-/** Séparation des tâches : celui qui a saisi ou modifié l'écriture ne peut pas la valider. */
-export function isOwnWork(row: { createdById: string | null; updatedById: string | null }, userId: string) {
-  return row.createdById === userId || row.updatedById === userId;
-}
-
 function userId(req: Request): string {
   return getAuthUser(req)!.sub;
 }
 
-type DossierRules = { id: string; ownerId: string; confidenceThreshold: number };
+type DossierRules = { id: string; confidenceThreshold: number };
 
 /**
- * Entrepreneur seul : une écriture du propriétaire, sans anomalie et au-dessus du seuil
- * de confiance du dossier, est validée dès l'enregistrement. Le reste attend sa vérification.
+ * Une écriture sans anomalie et au-dessus du seuil de confiance du dossier est validée
+ * dès l'enregistrement. Le reste attend sa vérification.
  */
-export function autoValidates(e: Pick<EntryInput, 'status' | 'detectedAnomaly' | 'confidenceScore'>, dossier: DossierRules, uid: string): boolean {
-  return dossier.ownerId === uid && e.status === 'pending_review' && !e.detectedAnomaly && e.confidenceScore >= dossier.confidenceThreshold;
+export function autoValidates(e: Pick<EntryInput, 'status' | 'detectedAnomaly' | 'confidenceScore'>, dossier: DossierRules): boolean {
+  return e.status === 'pending_review' && !e.detectedAnomaly && e.confidenceScore >= dossier.confidenceThreshold;
 }
 
 function autoValidationData(author: string, uid: string) {
@@ -57,7 +52,7 @@ function autoValidationData(author: string, uid: string) {
 
 function entryCreateData(e: EntryInput, dossier: DossierRules, createdById: string, author: string) {
   const dossierId = dossier.id;
-  const auto = autoValidates(e, dossier, createdById);
+  const auto = autoValidates(e, dossier);
   return {
     id: e.id,
     date: new Date(e.date),
@@ -154,7 +149,7 @@ router.post('/entries/:id/update', handler(async (req, res) => {
   if (accountError) return res.status(400).json({ error: accountError });
 
   const dossier = await prisma.clientDossier.findUniqueOrThrow({ where: { id: existing.clientDossierId } });
-  const auto = autoValidates(e, dossier, userId(req));
+  const auto = autoValidates(e, dossier);
 
   await prisma.journalEntry.update({
     where: { id: id },
@@ -220,8 +215,7 @@ router.post('/entries/:id/submit', handler(async (req, res) => {
 }));
 
 /**
- * Validation (unitaire ou en lot) : propriétaire du dossier, ou DAF / Chef comptable / administrateur
- * — ces derniers jamais sur une écriture qu'ils ont eux-mêmes saisie ou modifiée.
+ * Validation (unitaire ou en lot) par tout utilisateur ayant accès au dossier.
  * Réponse : écritures validées + écritures refusées avec leur motif.
  */
 router.post('/entries/batch-validate', handler(async (req, res) => {
@@ -238,15 +232,6 @@ router.post('/entries/batch-validate', handler(async (req, res) => {
     if (!entry) { refused.push({ id, reason: 'Écriture introuvable.' }); continue; }
     if (entry.status !== 'pending_review' && entry.status !== 'anomaly') {
       refused.push({ id, reason: entry.status === 'draft' ? 'Brouillon non soumis.' : 'Déjà validée ou annulée.' });
-      continue;
-    }
-    const owner = await ownsDossier(req, entry.clientDossierId);
-    if (!owner && !canValidate(user.role)) {
-      refused.push({ id, reason: 'Validation réservée au propriétaire du dossier.' });
-      continue;
-    }
-    if (!owner && isOwnWork(entry, user.sub)) {
-      refused.push({ id, reason: 'Séparation des tâches : vous avez saisi ou modifié cette écriture.' });
       continue;
     }
     await prisma.journalEntry.update({
@@ -266,14 +251,11 @@ router.post('/entries/batch-validate', handler(async (req, res) => {
   res.json({ validated: rows.map(serializeEntry), refused });
 }));
 
-/** Dévalidation : propriétaire du dossier, Chef comptable ou administrateur. L'écriture repasse "en attente". */
+/** Dévalidation par tout utilisateur ayant accès au dossier. L'écriture repasse "en attente". */
 router.post('/entries/:id/unvalidate', handler(async (req, res) => {
   const id = identifier(req.params.id);
   const existing = id ? await findAccessibleEntry(req, id) : null;
   if (!existing) return res.status(404).json({ error: 'Écriture introuvable.' });
-  if (!canUnvalidate(getAuthUser(req)?.role) && !(await ownsDossier(req, existing.clientDossierId))) {
-    return res.status(403).json({ error: 'Dévalidation réservée au propriétaire du dossier.' });
-  }
   if (existing.status !== 'validated') return res.status(409).json({ error: 'Seule une écriture validée peut être dévalidée.' });
   if (existing.invoiceId) return res.status(409).json({ error: 'Écriture générée par une facture : annulez la facture.' });
 
@@ -290,14 +272,11 @@ router.post('/entries/:id/unvalidate', handler(async (req, res) => {
   res.json(serializeEntry(row));
 }));
 
-/** Annulation : propriétaire du dossier, Chef comptable ou administrateur. Le lettrage éventuel est supprimé. */
+/** Annulation par tout utilisateur ayant accès au dossier. Le lettrage éventuel est supprimé. */
 router.post('/entries/:id/cancel', handler(async (req, res) => {
   const id = identifier(req.params.id);
   const existing = id ? await findAccessibleEntry(req, id) : null;
   if (!existing) return res.status(404).json({ error: 'Écriture introuvable.' });
-  if (!canUnvalidate(getAuthUser(req)?.role) && !(await ownsDossier(req, existing.clientDossierId))) {
-    return res.status(403).json({ error: 'Annulation réservée au propriétaire du dossier.' });
-  }
   if (existing.status === 'cancelled') return res.status(409).json({ error: 'Écriture déjà annulée.' });
   if (existing.invoiceId) return res.status(409).json({ error: 'Écriture générée par une facture : annulez la facture.' });
 

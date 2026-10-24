@@ -17,3 +17,4 @@ DAF.txt
 .vercel
 COMPTES_PROD.txt
 backup-mdp-prod-*
+.vercel.*/

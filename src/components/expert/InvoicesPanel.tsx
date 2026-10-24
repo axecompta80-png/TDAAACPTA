@@ -4,10 +4,9 @@ import { CurrentUser } from '../../utils/authApi';
 import { api } from '../../utils/api';
 import { accountsForDossier } from '../../data/syscohadaPlan';
 import { PAYMENT_METHOD_LABEL } from '../../utils/paymentAccounts';
-import { canValidate, canUnvalidate, canWrite, isOwnWork, ownsDossier } from '../../utils/roles';
 import { computeInvoiceTotals, computeAgedBalance, AGING_BUCKETS, paidAmount, remainingAmount, settlementState } from '../../utils/invoices';
 import { downloadXlsx, fileSafe } from '../../utils/excelExport';
-import { FileText, Plus, X, Send, Check, Ban, Edit3, Wallet, Printer, FileSpreadsheet, Trash2, Link2 } from 'lucide-react';
+import { FileText, Plus, X, Check, Ban, Edit3, Wallet, Printer, FileSpreadsheet, Trash2, Link2 } from 'lucide-react';
 
 interface InvoicesPanelProps {
   invoices: Invoice[];
@@ -50,11 +49,6 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
   const [lettering, setLettering] = useState<Invoice | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const writer = canWrite(currentUser.role);
-  // Le propriétaire du dossier émet ses factures lui-même, sans circuit de validation
-  const owner = ownsDossier(activeDossier, currentUser);
-  const validator = owner || canValidate(currentUser.role);
-  const chief = owner || canUnvalidate(currentUser.role);
   const aged = computeAgedBalance(invoices, today());
 
   const run = async (fn: () => Promise<void>) => {
@@ -62,10 +56,6 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
     try { await fn(); } catch (e: any) { notify(e?.message || 'Action impossible.'); } finally { setBusy(false); }
   };
 
-  const submit = (inv: Invoice) => run(async () => {
-    onInvoiceChanged(await api.submitInvoice(inv.id));
-    notify(`Facture ${inv.number} soumise à validation.`);
-  });
   const validate = (inv: Invoice) => run(async () => {
     const r = await api.validateInvoice(inv.id);
     onInvoiceChanged(r.invoice);
@@ -125,11 +115,9 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
           <button onClick={exportXlsx} className="px-3.5 py-2 bg-[#F8F7FD] text-[#1E084A] text-xs font-bold rounded-xl border border-[#DDD6FE] hover:bg-[#EDE9FE] flex items-center gap-1.5">
             <FileSpreadsheet className="w-3.5 h-3.5 text-[#10B981]" /> Export Excel
           </button>
-          {writer && (
-            <button onClick={() => setEditing('new')} className="px-4 py-2 bg-gradient-to-r from-[#7024E3] to-[#8B5CF6] text-white text-xs font-bold rounded-xl flex items-center gap-1.5">
-              <Plus className="w-4 h-4" /> Nouvelle facture
-            </button>
-          )}
+          <button onClick={() => setEditing('new')} className="px-4 py-2 bg-gradient-to-r from-[#7024E3] to-[#8B5CF6] text-white text-xs font-bold rounded-xl flex items-center gap-1.5">
+            <Plus className="w-4 h-4" /> Nouvelle facture
+          </button>
         </div>
       </div>
 
@@ -153,7 +141,6 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
                   <tr><td colSpan={7} className="p-6 text-center text-[#7C709A]">Aucune facture pour ce dossier.</td></tr>
                 )}
                 {invoices.map(inv => {
-                  const own = !owner && isOwnWork(inv, currentUser.id);
                   const st = settlementState(inv);
                   const late = inv.status === 'validated' && st !== 'paid' && inv.dueDate < today();
                   return (
@@ -180,31 +167,22 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
                           <button className={`${btn} text-[#1E084A] hover:bg-[#F5F3FF]`} title="Imprimer" onClick={() => printInvoice(inv, activeDossier)}>
                             <Printer className="w-3.5 h-3.5" />
                           </button>
-                          {writer && (inv.status === 'draft' || inv.status === 'pending_review') && (
+                          {(inv.status === 'draft' || inv.status === 'pending_review') && (
                             <button className={`${btn} text-[#1E084A] hover:bg-[#F5F3FF]`} title="Modifier" onClick={() => setEditing(inv)}>
                               <Edit3 className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          {writer && !owner && inv.status === 'draft' && (
-                            <button disabled={busy} className={`${btn} text-[#7024E3] hover:bg-[#F5F3FF]`} title="Soumettre à validation" onClick={() => submit(inv)}>
-                              <Send className="w-3.5 h-3.5" />
+                          {(inv.status === 'draft' || inv.status === 'pending_review') && (
+                            <button disabled={busy} className={`${btn} text-[#10B981] hover:bg-[#F0FDF4]`} title="Émettre la facture (génère les écritures)" onClick={() => validate(inv)}>
+                              <Check className="w-4 h-4" />
                             </button>
                           )}
-                          {validator && (inv.status === 'pending_review' || (owner && inv.status === 'draft')) && (own ? (
-                            <span className={`${btn} text-[#C4B5FD] cursor-help`} title="Séparation des tâches : un autre valideur doit valider votre facture.">
-                              <Check className="w-4 h-4" />
-                            </span>
-                          ) : (
-                            <button disabled={busy} className={`${btn} text-[#10B981] hover:bg-[#F0FDF4]`} title={owner ? "Émettre la facture (génère les écritures)" : "Valider et générer les écritures"} onClick={() => validate(inv)}>
-                              <Check className="w-4 h-4" />
-                            </button>
-                          ))}
-                          {writer && inv.status === 'validated' && (
+                          {inv.status === 'validated' && (
                             <button className={`${btn} text-[#0EA5E9] hover:bg-[#E0F2FE]`} title="Règlements & lettrage" onClick={() => setLettering(inv)}>
                               <Wallet className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          {((writer && (inv.status === 'draft' || inv.status === 'pending_review')) || (chief && inv.status === 'validated')) && (
+                          {inv.status !== 'cancelled' && (
                             <button disabled={busy} className={`${btn} text-[#DC2626] hover:bg-[#FEE2E2]`} title="Annuler la facture" onClick={() => cancel(inv)}>
                               <Ban className="w-3.5 h-3.5" />
                             </button>

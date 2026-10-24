@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { JournalEntry, ClientDossier } from '../../types';
 import { SYSCOHADA_ACCOUNTS, accountsForDossier } from '../../data/syscohadaPlan';
 import { CurrentUser } from '../../utils/authApi';
-import { canValidate, canUnvalidate, canWrite, isOwnWork, ownsDossier } from '../../utils/roles';
 import { downloadXlsx, fileSafe } from '../../utils/excelExport';
 import { 
   CheckCircle2, 
@@ -67,14 +66,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
 
   const dossierEntries = entries.filter(e => e.clientDossierId === activeDossier.id);
   const accounts = accountsForDossier(activeDossier.id);
-  const owner = ownsDossier(activeDossier, currentUser);
-  const validator = owner || canValidate(currentUser.role);
-  const chief = owner || canUnvalidate(currentUser.role);
-  const writer = canWrite(currentUser.role);
-  // La séparation des tâches ne s'applique pas au propriétaire du dossier
-  const blockedOwnWork = (e: JournalEntry) => !owner && isOwnWork(e, currentUser.id);
-  const canValidateEntry = (e: JournalEntry) =>
-    validator && (e.status === 'pending_review' || e.status === 'anomaly') && !blockedOwnWork(e);
+  const canValidateEntry = (e: JournalEntry) => e.status === 'pending_review' || e.status === 'anomaly';
   const askReason = (what: string) => window.prompt(`Motif de ${what} (facultatif) :`, '');
 
   // Assistant IA du cabinet : résumé du dossier et suggestion de validation en lot
@@ -82,7 +74,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
   const reliableIds = dossierEntries
-    .filter(e => e.status === 'pending_review' && !e.detectedAnomaly && e.confidenceScore >= activeDossier.confidenceThreshold && !blockedOwnWork(e))
+    .filter(e => e.status === 'pending_review' && !e.detectedAnomaly && e.confidenceScore >= activeDossier.confidenceThreshold)
     .map(e => e.id);
 
   const loadAiSummary = async () => {
@@ -223,7 +215,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
 
         <div className="flex flex-wrap items-center gap-2.5">
           {/* Batch Validation Button */}
-          {validator && selectedIds.length > 0 && (
+          {selectedIds.length > 0 && (
             <button
               onClick={() => {
                 onBatchValidate(selectedIds);
@@ -280,14 +272,14 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
             >
               {aiLoading ? 'Analyse en cours…' : 'Résumé IA du dossier'}
             </button>
-            {validator && <button
+            <button
               onClick={() => reliableIds.length && onBatchValidate(reliableIds)}
               disabled={reliableIds.length === 0}
               title={`Écritures en attente, sans anomalie, avec une confiance ≥ ${activeDossier.confidenceThreshold}%`}
               className="px-3 py-1.5 bg-gradient-to-r from-[#10B981] to-[#059669] text-white text-xs font-bold rounded-lg shadow-2xs disabled:opacity-40"
             >
               Valider les écritures fiables ({reliableIds.length})
-            </button>}
+            </button>
           </div>
         </div>
         {aiError && <p className="text-xs text-[#B91C1C]">{aiError}</p>}
@@ -527,7 +519,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
                     {/* Actions */}
                     <td className="p-3 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-1">
-                        {writer && EDITABLE.includes(entry.status) && !entry.invoiceId && (
+                        {EDITABLE.includes(entry.status) && !entry.invoiceId && (
                           <button
                             onClick={() => startEdit(entry)}
                             className="p-1.5 text-[#1E084A] hover:bg-[#F5F3FF] rounded-lg transition-colors"
@@ -536,7 +528,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        {writer && entry.status === 'draft' && (
+                        {entry.status === 'draft' && (
                           <button
                             onClick={() => onEntryAction('submit', entry.id)}
                             className="p-1.5 text-[#7024E3] hover:bg-[#F5F3FF] rounded-lg transition-colors"
@@ -561,12 +553,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
                             <Check className="w-4 h-4 font-bold" />
                           </button>
                         )}
-                        {validator && (entry.status === 'pending_review' || entry.status === 'anomaly') && blockedOwnWork(entry) && (
-                          <span className="p-1.5 text-[#C4B5FD] cursor-help" title="Séparation des tâches : vous avez saisi ou modifié cette écriture, un autre valideur doit la valider.">
-                            <Check className="w-4 h-4" />
-                          </span>
-                        )}
-                        {chief && entry.status === 'validated' && !entry.invoiceId && (
+                        {entry.status === 'validated' && !entry.invoiceId && (
                           <button
                             onClick={() => { const r = askReason('la dévalidation'); if (r !== null) onEntryAction('unvalidate', entry.id, r); }}
                             className="p-1.5 text-[#D97706] hover:bg-[#FEF3C7] rounded-lg transition-colors"
@@ -575,7 +562,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
                             <Undo2 className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        {chief && entry.status !== 'cancelled' && !entry.invoiceId && (
+                        {entry.status !== 'cancelled' && !entry.invoiceId && (
                           <button
                             onClick={() => { const r = askReason("l'annulation"); if (r !== null) onEntryAction('cancel', entry.id, r); }}
                             className="p-1.5 text-[#DC2626] hover:bg-[#FEE2E2] rounded-lg transition-colors"
