@@ -92,7 +92,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     rccm: '',
     ifu: '',
     regimeFiscal: 'Réel Simplifié',
-    confidenceThreshold: 85,
     currency: 'FCFA'
   });
 
@@ -128,7 +127,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       rccm: dossier.rccm,
       ifu: dossier.ifu,
       regimeFiscal: dossier.regimeFiscal,
-      confidenceThreshold: dossier.confidenceThreshold,
       currency: dossier.currency
     });
     setIsFormOpen(true);
@@ -475,8 +473,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               <span>•</span>
                               <span>NIF: <strong>{dossier.ifu}</strong></span>
                               <span>•</span>
-                              <span>Seuil IA: <strong>{dossier.confidenceThreshold}%</strong></span>
-                              <span>•</span>
                               <span className="text-[#10B981] font-bold">{dossierEntries.length} écriture(s)</span>
                             </div>
                           </div>
@@ -669,40 +665,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     Intelligence Artificielle & Automatisation Comptable
                   </h3>
                   <p className="text-xs text-[#7C709A] dark:text-[#A594C9] mt-0.5">
-                    Configurez le modèle Gemini, les seuils d'auto-imputation et le filtrage des doublons.
+                    Configurez le modèle Gemini et le filtrage des doublons.
                   </p>
-                </div>
-
-                <div className="p-4 rounded-xl border border-[#EDE9FE] dark:border-[#2D1A54] bg-[#FAF8FF] dark:bg-[#190D34] space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-[#1E084A] dark:text-[#F3EFFF] block">
-                        Seuil Global de Confiance IA : {settings.globalConfidenceThreshold}%
-                      </span>
-                      <p className="text-[12px] text-[#7C709A] dark:text-[#8E7BB8]">
-                        Les écritures dont le score calculé dépasse ce seuil peuvent être auto-validées pour le Grand Livre.
-                      </p>
-                    </div>
-                    <span className="text-sm font-mono font-black text-[#7024E3] dark:text-[#A78BFA] px-2.5 py-1 bg-white dark:bg-[#2A164F] rounded-lg border border-[#DDD6FE] dark:border-[#3D216D]">
-                      {settings.globalConfidenceThreshold}%
-                    </span>
-                  </div>
-
-                  <input
-                    type="range"
-                    min="50"
-                    max="98"
-                    step="1"
-                    value={settings.globalConfidenceThreshold}
-                    onChange={e => onUpdateSettings({ ...settings, globalConfidenceThreshold: Number(e.target.value) })}
-                    className="w-full h-2 bg-[#DDD6FE] dark:bg-[#35225E] rounded-lg appearance-none cursor-pointer accent-[#7024E3]"
-                  />
-
-                  <div className="flex justify-between text-[11px] text-[#7C709A] font-mono">
-                    <span>50% (Permissif)</span>
-                    <span>85% (Recommandé)</span>
-                    <span>98% (Très strict)</span>
-                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -712,7 +676,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       Validation des écritures
                     </span>
                     <p className="text-[12px] text-[#7C709A] dark:text-[#8E7BB8]">
-                      Vos écritures sans anomalie et au-dessus du seuil de confiance du dossier sont validées automatiquement. Les autres restent « à vérifier » dans le journal, où vous les validez en un clic.
+                      Les écritures sans anomalie sont validées automatiquement. Les anomalies restent « à vérifier » dans le journal, où vous les validez en un clic.
                     </p>
                   </div>
 
@@ -1256,21 +1220,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </select>
                 </div>
 
-                {/* Confidence Threshold */}
-                <div>
-                  <label className="font-bold block mb-1 flex items-center justify-between">
-                    <span>Seuil de Confiance IA : {formData.confidenceThreshold}%</span>
-                  </label>
-                  <input
-                    type="range"
-                    min="50"
-                    max="98"
-                    step="1"
-                    value={formData.confidenceThreshold}
-                    onChange={e => setFormData({ ...formData, confidenceThreshold: Number(e.target.value) })}
-                    className="w-full h-2 bg-[#DDD6FE] dark:bg-[#35225E] rounded-lg appearance-none cursor-pointer accent-[#7024E3] mt-2"
-                  />
-                </div>
               </div>
 
               {/* Action Buttons */}

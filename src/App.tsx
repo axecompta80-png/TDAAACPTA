@@ -320,25 +320,6 @@ export default function App({ currentUser, onLogout }: AppProps) {
     }
   };
 
-  // Update confidence threshold
-  const handleUpdateConfidenceThreshold = async (dossierId: string, newThreshold: number) => {
-    const target = dossiers.find(d => d.id === dossierId);
-    if (!target) return;
-    try {
-      const saved = await api.updateDossier({ ...target, confidenceThreshold: newThreshold });
-      setDossiers(prev => prev.map(d => d.id === saved.id ? saved : d));
-      pushNotification(
-        'Seuil IA reconfiguré',
-        `Le seuil d'auto-validation du dossier a été fixé à ${newThreshold}%.`,
-        'info',
-        'ia'
-      );
-    } catch (e) {
-      console.error('Erreur lors de la mise à jour du seuil de confiance', e);
-      showToast('Erreur lors de la mise à jour du seuil.');
-    }
-  };
-
   // Entreprise & dossiers
   async function handleSetupCompany(company: DossierInfo) {
     const main = await api.setupCompany(company);
@@ -659,7 +640,6 @@ export default function App({ currentUser, onLogout }: AppProps) {
                   setActiveDossierId(d.id);
                   setExpertTab('journal');
                 }}
-                onUpdateConfidenceThreshold={handleUpdateConfidenceThreshold}
               />
             )}
 

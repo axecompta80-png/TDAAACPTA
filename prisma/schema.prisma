@@ -135,7 +135,6 @@ model ClientDossier {
   rccm                String
   ifu                 String
   regimeFiscal        RegimeFiscal
-  confidenceThreshold Int          @default(85)
   currency            String
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
@@ -261,8 +260,6 @@ model PlatformSettings {
   defaultDebitCashAccount    String
   defaultCreditSalesAccount  String
   defaultDebitExpenseAccount String
-  globalConfidenceThreshold  Int
-  autoValidateHighConfidence Boolean
   duplicateDetection         Boolean
   aiModelPreference          AiModelPreference
   defaultStartupView         StartupView

@@ -31,7 +31,7 @@ const mail = (n: string) => `e2e-${n}-${run}@test.local`;
 const PWD = 'Motdepasse123';
 const companyBody = (name: string) => ({
   name, managerName: 'Test', phone: '+221 77', activity: 'Commerce (saisie libre)', city: 'Dakar', country: 'Sénégal',
-  rccm: 'SN-1', ifu: 'X1', regimeFiscal: 'Réel Simplifié', confidenceThreshold: 85, currency: 'FCFA',
+  rccm: 'SN-1', ifu: 'X1', regimeFiscal: 'Réel Simplifié', currency: 'FCFA',
 });
 const entryBody = (dossierId: string, pieceRef: string) => ({
   clientDossierId: dossierId, date: '2026-10-24', label: 'Vente comptant', pieceRef, debitAccountCode: '5711', creditAccountCode: '7011',
@@ -72,8 +72,11 @@ const openMain = await call('B', `/dossiers/${M}`);
 t('B ouvre l\'entreprise : 403 « pas accès »', openMain.s === 403 && openMain.j?.error === NO_ACCESS, openMain);
 t('B ouvre son dossier', (await call('B', `/dossiers/${D}`)).s === 200);
 const eB = await call('B', '/entries', entryBody(D, 'B1'));
-t('B saisit dans son dossier', eB.s === 201, eB.j);
-t('B valide', (await call('B', '/entries/batch-validate', { ids: [eB.j?.id] })).j?.validated?.length === 1);
+t("B saisit dans son dossier : sans anomalie, validée d'office (aucun seuil)", eB.s === 201 && eB.j?.status === 'validated', eB.j);
+t('B dévalide', (await call('B', `/entries/${eB.j?.id}/unvalidate`, {})).j?.status === 'pending_review');
+t('B revalide', (await call('B', '/entries/batch-validate', { ids: [eB.j?.id] })).j?.validated?.length === 1);
+const eAno = await call('B', '/entries', { ...entryBody(D, 'B3'), detectedAnomaly: 'Doublon possible' });
+t('une anomalie reste à vérifier', eAno.s === 201 && eAno.j?.status !== 'validated', eAno.j);
 t("B ne saisit pas dans l'entreprise", (await call('B', '/entries', entryBody(M, 'B2'))).s === 404);
 t("B ne valide pas une écriture de l'entreprise", (await call('B', `/entries/${eM.j?.id}/unvalidate`, {})).s === 404);
 const inv = await call('B', '/invoices', { clientDossierId: D, date: '2026-10-24', mode: 'credit', customerName: 'Client', vatRate: 18, lines: [{ description: 'Article', quantity: 2, unitPrice: 5000 }] });

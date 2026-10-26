@@ -32,8 +32,6 @@ export function settingsData(s: any) {
     defaultDebitCashAccount: s.defaultDebitCashAccount,
     defaultCreditSalesAccount: s.defaultCreditSalesAccount,
     defaultDebitExpenseAccount: s.defaultDebitExpenseAccount,
-    globalConfidenceThreshold: s.globalConfidenceThreshold,
-    autoValidateHighConfidence: s.autoValidateHighConfidence,
     duplicateDetection: s.duplicateDetection,
     aiModelPreference: AI_MODEL_TO_DB[s.aiModelPreference] as any,
     defaultStartupView: s.defaultStartupView as any,

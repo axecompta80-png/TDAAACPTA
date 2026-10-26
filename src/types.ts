@@ -142,7 +142,6 @@ export interface ClientDossier {
   rccm: string;
   ifu: string;
   regimeFiscal: 'Réel Simplifié' | 'Réel Normal' | 'Synthétique / Forfait';
-  confidenceThreshold: number; // default 85
   currency: string;
 }
 
@@ -219,9 +218,7 @@ export interface PlatformSettings {
   defaultCreditSalesAccount: string;
   defaultDebitExpenseAccount: string;
 
-  // IA & Seuil d'imputation
-  globalConfidenceThreshold: number; // 50 to 98
-  autoValidateHighConfidence: boolean;
+  // IA
   duplicateDetection: boolean;
   aiModelPreference: 'gemini-2.5-flash' | 'gemini-2.5-flash-lite' | 'heuristic-fast';
 

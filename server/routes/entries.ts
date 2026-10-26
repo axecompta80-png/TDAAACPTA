@@ -31,14 +31,14 @@ function userId(req: Request): string {
   return getAuthUser(req)!.sub;
 }
 
-type DossierRules = { id: string; confidenceThreshold: number };
+type DossierRules = { id: string };
 
 /**
- * Une écriture sans anomalie et au-dessus du seuil de confiance du dossier est validée
- * dès l'enregistrement. Le reste attend sa vérification.
+ * Une écriture sans anomalie est validée dès l'enregistrement (aucun seuil de confiance).
+ * Les anomalies et les brouillons attendent leur vérification.
  */
-export function autoValidates(e: Pick<EntryInput, 'status' | 'detectedAnomaly' | 'confidenceScore'>, dossier: DossierRules): boolean {
-  return e.status === 'pending_review' && !e.detectedAnomaly && e.confidenceScore >= dossier.confidenceThreshold;
+export function autoValidates(e: Pick<EntryInput, 'status' | 'detectedAnomaly'>): boolean {
+  return e.status === 'pending_review' && !e.detectedAnomaly;
 }
 
 function autoValidationData(author: string, uid: string) {
@@ -46,13 +46,13 @@ function autoValidationData(author: string, uid: string) {
     status: 'validated' as const,
     validatedById: uid,
     validatedAt: new Date(),
-    auditTrail: { create: { action: 'auto_validated' as const, author, notes: 'Validée automatiquement (sans anomalie, confiance au-dessus du seuil du dossier).' } },
+    auditTrail: { create: { action: 'auto_validated' as const, author, notes: 'Validée automatiquement (aucune anomalie détectée).' } },
   };
 }
 
 function entryCreateData(e: EntryInput, dossier: DossierRules, createdById: string, author: string) {
   const dossierId = dossier.id;
-  const auto = autoValidates(e, dossier);
+  const auto = autoValidates(e);
   return {
     id: e.id,
     date: new Date(e.date),
@@ -148,8 +148,7 @@ router.post('/entries/:id/update', handler(async (req, res) => {
   const accountError = await assertAccountsUsable([e.debitAccountCode, e.creditAccountCode], existing.clientDossierId);
   if (accountError) return res.status(400).json({ error: accountError });
 
-  const dossier = await prisma.clientDossier.findUniqueOrThrow({ where: { id: existing.clientDossierId } });
-  const auto = autoValidates(e, dossier);
+  const auto = autoValidates(e);
 
   await prisma.journalEntry.update({
     where: { id: id },

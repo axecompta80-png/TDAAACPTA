@@ -50,7 +50,6 @@ function serializeDossier(row) {
     rccm: row.rccm,
     ifu: row.ifu,
     regimeFiscal: REGIME_FISCAL_FROM_DB[row.regimeFiscal],
-    confidenceThreshold: row.confidenceThreshold,
     currency: row.currency
   };
 }
@@ -159,8 +158,6 @@ function serializePlatformSettings(row) {
     defaultDebitCashAccount: row.defaultDebitCashAccount,
     defaultCreditSalesAccount: row.defaultCreditSalesAccount,
     defaultDebitExpenseAccount: row.defaultDebitExpenseAccount,
-    globalConfidenceThreshold: row.globalConfidenceThreshold,
-    autoValidateHighConfidence: row.autoValidateHighConfidence,
     duplicateDetection: row.duplicateDetection,
     aiModelPreference: AI_MODEL_FROM_DB[row.aiModelPreference],
     defaultStartupView: row.defaultStartupView,
@@ -290,9 +287,7 @@ var init_initialSettings = __esm({
       defaultDebitCashAccount: "5711 - Caisse Principale",
       defaultCreditSalesAccount: "7011 - Ventes de Marchandises",
       defaultDebitExpenseAccount: "6011 - Achats de Marchandises",
-      // IA & Seuil d'imputation
-      globalConfidenceThreshold: 85,
-      autoValidateHighConfidence: true,
+      // IA
       duplicateDetection: true,
       aiModelPreference: "gemini-2.5-flash",
       // Préférences & Affichage
@@ -338,8 +333,6 @@ function settingsData(s) {
     defaultDebitCashAccount: s.defaultDebitCashAccount,
     defaultCreditSalesAccount: s.defaultCreditSalesAccount,
     defaultDebitExpenseAccount: s.defaultDebitExpenseAccount,
-    globalConfidenceThreshold: s.globalConfidenceThreshold,
-    autoValidateHighConfidence: s.autoValidateHighConfidence,
     duplicateDetection: s.duplicateDetection,
     aiModelPreference: AI_MODEL_TO_DB[s.aiModelPreference],
     defaultStartupView: s.defaultStartupView,
@@ -591,8 +584,6 @@ function validateDossierInput(body) {
   const ifu = text(b.ifu, 60);
   const currency = text(b.currency, 12) ?? "FCFA";
   const regimeFiscal = oneOf(b.regimeFiscal, REGIMES_FISCAUX);
-  const rawThreshold = Number(b.confidenceThreshold);
-  const confidenceThreshold = Number.isFinite(rawThreshold) ? Math.min(100, Math.max(50, Math.round(rawThreshold))) : 85;
   if (!name) return { ok: false, error: "Le nom du dossier est requis (160 caract\xE8res maximum)." };
   if (!managerName) return { ok: false, error: "Le nom du g\xE9rant est requis." };
   if (!phone) return { ok: false, error: "Le num\xE9ro de t\xE9l\xE9phone est requis." };
@@ -602,7 +593,7 @@ function validateDossierInput(body) {
   if (!rccm) return { ok: false, error: "Le num\xE9ro RCCM est requis." };
   if (!ifu) return { ok: false, error: "Le num\xE9ro d'IFU est requis." };
   if (!regimeFiscal) return { ok: false, error: "R\xE9gime fiscal invalide." };
-  return { ok: true, data: { name, managerName, phone, activity, city, country, rccm, ifu, regimeFiscal, confidenceThreshold, currency } };
+  return { ok: true, data: { name, managerName, phone, activity, city, country, rccm, ifu, regimeFiscal, currency } };
 }
 function parseAuditTrail(value, trusted = false) {
   if (!Array.isArray(value)) return [];
@@ -723,8 +714,6 @@ function validateSettingsInput(body) {
       defaultDebitCashAccount: text(s.defaultDebitCashAccount, 120) ?? "5711 - Caisse Principale",
       defaultCreditSalesAccount: text(s.defaultCreditSalesAccount, 120) ?? "7011 - Ventes de Marchandises",
       defaultDebitExpenseAccount: text(s.defaultDebitExpenseAccount, 120) ?? "6011 - Achats de Marchandises",
-      globalConfidenceThreshold: num(s.globalConfidenceThreshold, 50, 100, 85),
-      autoValidateHighConfidence: s.autoValidateHighConfidence !== false,
       duplicateDetection: s.duplicateDetection !== false,
       aiModelPreference: oneOf(s.aiModelPreference, ["gemini-2.5-flash", "gemini-2.5-flash-lite", "heuristic-fast"]) ?? "gemini-2.5-flash",
       defaultStartupView: oneOf(s.defaultStartupView, STARTUP_VIEWS) ?? "simplified",
@@ -828,7 +817,6 @@ var dossierData = (d) => ({
   rccm: d.rccm,
   ifu: d.ifu,
   regimeFiscal: REGIME_FISCAL_TO_DB[d.regimeFiscal],
-  confidenceThreshold: d.confidenceThreshold,
   currency: d.currency
 });
 var mainOnly = (res) => res.status(403).json({ error: "R\xE9serv\xE9 au compte principal de l'entreprise." });
@@ -939,20 +927,20 @@ async function assertAccountsUsable(codes, dossierId) {
 function userId(req) {
   return getAuthUser(req).sub;
 }
-function autoValidates(e, dossier) {
-  return e.status === "pending_review" && !e.detectedAnomaly && e.confidenceScore >= dossier.confidenceThreshold;
+function autoValidates(e) {
+  return e.status === "pending_review" && !e.detectedAnomaly;
 }
 function autoValidationData(author, uid) {
   return {
     status: "validated",
     validatedById: uid,
     validatedAt: /* @__PURE__ */ new Date(),
-    auditTrail: { create: { action: "auto_validated", author, notes: "Valid\xE9e automatiquement (sans anomalie, confiance au-dessus du seuil du dossier)." } }
+    auditTrail: { create: { action: "auto_validated", author, notes: "Valid\xE9e automatiquement (aucune anomalie d\xE9tect\xE9e)." } }
   };
 }
 function entryCreateData(e, dossier, createdById, author) {
   const dossierId = dossier.id;
-  const auto = autoValidates(e, dossier);
+  const auto = autoValidates(e);
   return {
     id: e.id,
     date: new Date(e.date),
@@ -1029,8 +1017,7 @@ router2.post("/entries/:id/update", handler(async (req, res) => {
   const e = unwrap(validateEntryInput(req.body));
   const accountError = await assertAccountsUsable([e.debitAccountCode, e.creditAccountCode], existing.clientDossierId);
   if (accountError) return res.status(400).json({ error: accountError });
-  const dossier = await prisma.clientDossier.findUniqueOrThrow({ where: { id: existing.clientDossierId } });
-  const auto = autoValidates(e, dossier);
+  const auto = autoValidates(e);
   await prisma.journalEntry.update({
     where: { id },
     data: {
@@ -2393,7 +2380,6 @@ function explain(op, m, amount, paid, assumed) {
 }
 function buildEntries(ops, { ctx, rawInput, inputType, source }) {
   const { dossier, settings, now } = ctx;
-  const threshold = dossier.confidenceThreshold ?? settings.globalConfidenceThreshold;
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const rate = settings.defaultVatRate;
   const noVatRegime = dossier.regimeFiscal === "Synth\xE9tique / Forfait";
@@ -3166,15 +3152,11 @@ function summarize(entries) {
   return `J'ai enregistr\xE9 ${entries.length} \xE9critures :
 ${lines.join("\n")}`;
 }
-function reviewNote(entries, threshold) {
-  const anomalies = entries.filter((e) => e.status === "anomaly");
-  const pending = entries.filter((e) => e.status === "pending_review" && e.confidenceScore < threshold);
-  const notes = [];
-  if (anomalies.length) notes.push(`\u26A0\uFE0F ${anomalies[0].detectedAnomaly}`);
-  if (pending.length && !anomalies.length) notes.push(`Je ne suis pas s\xFBr \xE0 100 % (confiance ${pending[0].confidenceScore} %) : v\xE9rifiez-la dans le journal (Mode Comptable).`);
-  return notes.length ? `
+function reviewNote(entries) {
+  const anomaly = entries.find((e) => e.status === "anomaly");
+  return anomaly ? `
 
-${notes.join("\n")}` : "";
+\u26A0\uFE0F ${anomaly.detectedAnomaly}` : "";
 }
 router9.post("/chat", handler2(async (req, res) => {
   const { dossierId, message = "", inputType = "text", pendingText, image } = req.body ?? {};
@@ -3232,7 +3214,7 @@ router9.post("/chat", handler2(async (req, res) => {
     return res.json({
       success: true,
       intent: "operation",
-      reply: `${summarize(entries)}${reviewNote(entries, ctx.dossier.confidenceThreshold)}${outcome.reply ?? ""}`,
+      reply: `${summarize(entries)}${reviewNote(entries)}${outcome.reply ?? ""}`,
       entries,
       review: counts,
       source,
@@ -3263,7 +3245,7 @@ router9.post("/dossier-summary", handler2(async (req, res) => {
   if (a.receivables.total > a.month.revenue && a.receivables.total > 0) points.push(`cr\xE9ances clients \xE9lev\xE9es (${f(a.receivables.total)})`);
   if (a.forecast.runwayDays !== null && a.forecast.runwayDays < 60) points.push(`tr\xE9sorerie pour environ ${a.forecast.runwayDays} jours au rythme actuel`);
   if (a.credit.sufficientData && a.credit.traceabilityRate < 40) points.push(`seulement ${a.credit.traceabilityRate}% des ventes trac\xE9es hors esp\xE8ces`);
-  const thresholdBatch = ctx.entries.filter((e) => e.status === "pending_review" && e.confidenceScore >= ctx.dossier.confidenceThreshold).length;
+  const thresholdBatch = ctx.entries.filter((e) => e.status === "pending_review" && !e.detectedAnomaly).length;
   res.json({
     dossierId: ctx.dossier.id,
     summary: `${ctx.dossier.name} : tr\xE9sorerie ${f(a.treasury.total)}, chiffre d'affaires du mois ${f(a.month.revenue)}, charges ${f(a.month.expenses)}, r\xE9sultat ${f(a.month.result)}. TVA du mois : ${a.tva.netToPay > 0 ? `${f(a.tva.netToPay)} \xE0 reverser` : `cr\xE9dit de ${f(a.tva.credit)}`}. Score de solvabilit\xE9 ${a.credit.sufficientData ? `${a.credit.score}/100` : "non \xE9valuable (historique insuffisant)"}.`,

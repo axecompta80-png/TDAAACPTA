@@ -181,7 +181,6 @@ interface BuildOptions {
 
 export function buildEntries(ops: ParsedOperation[], { ctx, rawInput, inputType, source }: BuildOptions): JournalEntry[] {
   const { dossier, settings, now } = ctx;
-  const threshold = dossier.confidenceThreshold ?? settings.globalConfidenceThreshold;
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const rate = settings.defaultVatRate;
   const noVatRegime = dossier.regimeFiscal === 'Synthétique / Forfait';

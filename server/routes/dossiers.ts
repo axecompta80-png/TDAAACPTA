@@ -20,7 +20,6 @@ export const dossierData = (d: DossierInput) => ({
   rccm: d.rccm,
   ifu: d.ifu,
   regimeFiscal: REGIME_FISCAL_TO_DB[d.regimeFiscal] as any,
-  confidenceThreshold: d.confidenceThreshold,
   currency: d.currency,
 });
 

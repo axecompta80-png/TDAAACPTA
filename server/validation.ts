@@ -71,7 +71,7 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | nul
 
 export interface DossierInput {
   name: string; managerName: string; phone: string; activity: string; city: string; country: string;
-  rccm: string; ifu: string; regimeFiscal: string; confidenceThreshold: number; currency: string;
+  rccm: string; ifu: string; regimeFiscal: string; currency: string;
 }
 
 export function validateDossierInput(body: unknown): Result<DossierInput> {
@@ -86,10 +86,6 @@ export function validateDossierInput(body: unknown): Result<DossierInput> {
   const ifu = text(b.ifu, 60);
   const currency = text(b.currency, 12) ?? 'FCFA';
   const regimeFiscal = oneOf(b.regimeFiscal, REGIMES_FISCAUX);
-  const rawThreshold = Number(b.confidenceThreshold);
-  const confidenceThreshold = Number.isFinite(rawThreshold)
-    ? Math.min(100, Math.max(50, Math.round(rawThreshold)))
-    : 85;
 
   if (!name) return { ok: false, error: 'Le nom du dossier est requis (160 caractères maximum).' };
   if (!managerName) return { ok: false, error: 'Le nom du gérant est requis.' };
@@ -101,7 +97,7 @@ export function validateDossierInput(body: unknown): Result<DossierInput> {
   if (!ifu) return { ok: false, error: "Le numéro d'IFU est requis." };
   if (!regimeFiscal) return { ok: false, error: 'Régime fiscal invalide.' };
 
-  return { ok: true, data: { name, managerName, phone, activity, city, country, rccm, ifu, regimeFiscal, confidenceThreshold, currency } };
+  return { ok: true, data: { name, managerName, phone, activity, city, country, rccm, ifu, regimeFiscal, currency } };
 }
 
 export interface AuditLogInput {
@@ -252,8 +248,6 @@ export function validateSettingsInput(body: unknown): Result<Record<string, unkn
       defaultDebitCashAccount: text(s.defaultDebitCashAccount, 120) ?? '5711 - Caisse Principale',
       defaultCreditSalesAccount: text(s.defaultCreditSalesAccount, 120) ?? '7011 - Ventes de Marchandises',
       defaultDebitExpenseAccount: text(s.defaultDebitExpenseAccount, 120) ?? '6011 - Achats de Marchandises',
-      globalConfidenceThreshold: num(s.globalConfidenceThreshold, 50, 100, 85),
-      autoValidateHighConfidence: s.autoValidateHighConfidence !== false,
       duplicateDetection: s.duplicateDetection !== false,
       aiModelPreference: oneOf(s.aiModelPreference, ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'heuristic-fast'] as const) ?? 'gemini-2.5-flash',
       defaultStartupView: oneOf(s.defaultStartupView, STARTUP_VIEWS) ?? 'simplified',

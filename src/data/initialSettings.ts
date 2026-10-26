@@ -60,9 +60,7 @@ export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
   defaultCreditSalesAccount: '7011 - Ventes de Marchandises',
   defaultDebitExpenseAccount: '6011 - Achats de Marchandises',
 
-  // IA & Seuil d'imputation
-  globalConfidenceThreshold: 85,
-  autoValidateHighConfidence: true,
+  // IA
   duplicateDetection: true,
   aiModelPreference: 'gemini-2.5-flash',
 

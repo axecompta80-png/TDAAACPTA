@@ -60,7 +60,6 @@ export function serializeDossier(row: any): ClientDossier {
     rccm: row.rccm,
     ifu: row.ifu,
     regimeFiscal: REGIME_FISCAL_FROM_DB[row.regimeFiscal],
-    confidenceThreshold: row.confidenceThreshold,
     currency: row.currency,
   };
 }
@@ -181,8 +180,6 @@ export function serializePlatformSettings(row: any): PlatformSettings {
     defaultDebitCashAccount: row.defaultDebitCashAccount,
     defaultCreditSalesAccount: row.defaultCreditSalesAccount,
     defaultDebitExpenseAccount: row.defaultDebitExpenseAccount,
-    globalConfidenceThreshold: row.globalConfidenceThreshold,
-    autoValidateHighConfidence: row.autoValidateHighConfidence,
     duplicateDetection: row.duplicateDetection,
     aiModelPreference: AI_MODEL_FROM_DB[row.aiModelPreference],
     defaultStartupView: row.defaultStartupView,

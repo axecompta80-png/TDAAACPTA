@@ -27,7 +27,6 @@ const EMPTY_FORM: Omit<DossierForm, 'country' | 'city' | 'phone' | 'currency'> =
   rccm: '',
   ifu: '',
   regimeFiscal: 'Réel Simplifié',
-  confidenceThreshold: 85,
 };
 
 /**
@@ -170,17 +169,6 @@ export const CompanySetup: React.FC<CompanySetupProps> = ({ currentUser, onLogou
               <div>
                 <label className={label}>N° IFU *</label>
                 <input className={field} value={form.ifu} onChange={e => set({ ifu: e.target.value })} placeholder="ex : 0824911K" />
-              </div>
-              <div className="sm:col-span-2">
-                <label className={label}>Seuil de confiance de l'agent IA (auto-validation) : {form.confidenceThreshold} %</label>
-                <input
-                  type="range"
-                  min={50}
-                  max={98}
-                  value={form.confidenceThreshold}
-                  onChange={e => set({ confidenceThreshold: Number(e.target.value) })}
-                  className="w-full accent-[#7024E3]"
-                />
               </div>
             </div>
 

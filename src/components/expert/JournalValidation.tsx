@@ -74,7 +74,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
   const reliableIds = dossierEntries
-    .filter(e => e.status === 'pending_review' && !e.detectedAnomaly && e.confidenceScore >= activeDossier.confidenceThreshold)
+    .filter(e => e.status === 'pending_review' && !e.detectedAnomaly)
     .map(e => e.id);
 
   const loadAiSummary = async () => {
@@ -275,7 +275,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
             <button
               onClick={() => reliableIds.length && onBatchValidate(reliableIds)}
               disabled={reliableIds.length === 0}
-              title={`Écritures en attente, sans anomalie, avec une confiance ≥ ${activeDossier.confidenceThreshold}%`}
+              title="Écritures en attente, sans anomalie"
               className="px-3 py-1.5 bg-gradient-to-r from-[#10B981] to-[#059669] text-white text-xs font-bold rounded-lg shadow-2xs disabled:opacity-40"
             >
               Valider les écritures fiables ({reliableIds.length})

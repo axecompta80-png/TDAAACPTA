@@ -64,14 +64,10 @@ function summarize(entries: JournalEntry[]): string {
   return `J'ai enregistré ${entries.length} écritures :\n${lines.join('\n')}`;
 }
 
-function reviewNote(entries: JournalEntry[], threshold: number): string {
-  const anomalies = entries.filter(e => e.status === 'anomaly');
-  // Au-dessus du seuil, l'écriture du propriétaire est validée à l'enregistrement
-  const pending = entries.filter(e => e.status === 'pending_review' && e.confidenceScore < threshold);
-  const notes: string[] = [];
-  if (anomalies.length) notes.push(`⚠️ ${anomalies[0].detectedAnomaly}`);
-  if (pending.length && !anomalies.length) notes.push(`Je ne suis pas sûr à 100 % (confiance ${pending[0].confidenceScore} %) : vérifiez-la dans le journal (Mode Comptable).`);
-  return notes.length ? `\n\n${notes.join('\n')}` : '';
+// Sans anomalie, l'écriture est validée à l'enregistrement : seules les anomalies sont signalées.
+function reviewNote(entries: JournalEntry[]): string {
+  const anomaly = entries.find(e => e.status === 'anomaly');
+  return anomaly ? `\n\n⚠️ ${anomaly.detectedAnomaly}` : '';
 }
 
 // Discussion avec l'agent : comprend une opération, une question, ou demande une précision.
@@ -146,7 +142,7 @@ router.post('/chat', handler(async (req, res) => {
     return res.json({
       success: true,
       intent: 'operation',
-      reply: `${summarize(entries)}${reviewNote(entries, ctx.dossier.confidenceThreshold)}${outcome.reply ?? ''}`,
+      reply: `${summarize(entries)}${reviewNote(entries)}${outcome.reply ?? ''}`,
       entries,
       review: counts,
       source,
@@ -181,7 +177,7 @@ router.post('/dossier-summary', handler(async (req, res) => {
   if (a.receivables.total > a.month.revenue && a.receivables.total > 0) points.push(`créances clients élevées (${f(a.receivables.total)})`);
   if (a.forecast.runwayDays !== null && a.forecast.runwayDays < 60) points.push(`trésorerie pour environ ${a.forecast.runwayDays} jours au rythme actuel`);
   if (a.credit.sufficientData && a.credit.traceabilityRate < 40) points.push(`seulement ${a.credit.traceabilityRate}% des ventes tracées hors espèces`);
-  const thresholdBatch = ctx.entries.filter(e => e.status === 'pending_review' && e.confidenceScore >= ctx.dossier.confidenceThreshold).length;
+  const thresholdBatch = ctx.entries.filter(e => e.status === 'pending_review' && !e.detectedAnomaly).length;
   res.json({
     dossierId: ctx.dossier.id,
     summary: `${ctx.dossier.name} : trésorerie ${f(a.treasury.total)}, chiffre d'affaires du mois ${f(a.month.revenue)}, charges ${f(a.month.expenses)}, résultat ${f(a.month.result)}. TVA du mois : ${a.tva.netToPay > 0 ? `${f(a.tva.netToPay)} à reverser` : `crédit de ${f(a.tva.credit)}`}. Score de solvabilité ${a.credit.sufficientData ? `${a.credit.score}/100` : 'non évaluable (historique insuffisant)'}.`,

@@ -6,7 +6,6 @@ import {
   Clock,
   AlertTriangle,
   CheckCircle2,
-  Sliders,
   ChevronRight,
   Filter
 } from 'lucide-react';
@@ -16,7 +15,6 @@ interface MultiClientPortfolioProps {
   activeDossier: ClientDossier;
   entries: JournalEntry[];
   onSelectDossier: (dossier: ClientDossier) => void;
-  onUpdateConfidenceThreshold: (dossierId: string, newThreshold: number) => void;
 }
 
 interface DossierStat {
@@ -33,11 +31,9 @@ export const MultiClientPortfolio: React.FC<MultiClientPortfolioProps> = ({
   dossiers,
   activeDossier,
   entries,
-  onSelectDossier,
-  onUpdateConfidenceThreshold
+  onSelectDossier
 }) => {
   const [filterCountry, setFilterCountry] = useState<string>('all');
-  const [editingThresholdDossierId, setEditingThresholdDossierId] = useState<string | null>(null);
 
   const countries = Array.from(new Set(dossiers.map(d => d.country)));
 
@@ -122,34 +118,6 @@ export const MultiClientPortfolio: React.FC<MultiClientPortfolioProps> = ({
             <span className="text-[#7C709A] font-mono">0</span>
           )}
         </td>
-        <td className="p-3.5 text-center">
-          {editingThresholdDossierId === dossier.id ? (
-            <div className="flex items-center justify-center gap-1">
-              <input
-                type="number"
-                min="50"
-                max="99"
-                defaultValue={dossier.confidenceThreshold}
-                onBlur={(e) => {
-                  onUpdateConfidenceThreshold(dossier.id, parseInt(e.target.value) || 85);
-                  setEditingThresholdDossierId(null);
-                }}
-                className="w-12 text-center p-1 bg-[#F8F7FD] border border-[#DDD6FE] rounded-lg text-xs font-mono font-bold text-[#1E084A]"
-                autoFocus
-              />
-              <span className="text-[11px] font-mono text-[#7C709A]">%</span>
-            </div>
-          ) : (
-            <button
-              onClick={() => setEditingThresholdDossierId(dossier.id)}
-              className="px-2.5 py-0.5 bg-[#F8F7FD] hover:bg-[#EDE9FE] border border-[#DDD6FE] rounded-lg font-mono text-[12px] font-bold text-[#1E084A] inline-flex items-center gap-1.5 transition-colors"
-              title="Cliquer pour ajuster le seuil d'auto-validation"
-            >
-              <Sliders className="w-2.5 h-2.5 text-[#7024E3]" />
-              <span>≥ {dossier.confidenceThreshold}%</span>
-            </button>
-          )}
-        </td>
         <td className="p-3.5 text-right">
           <button
             onClick={() => onSelectDossier(dossier)}
@@ -167,7 +135,7 @@ export const MultiClientPortfolio: React.FC<MultiClientPortfolioProps> = ({
     );
   };
 
-  const columnCount = 9;
+  const columnCount = 8;
 
   return (
     <div className="space-y-5">
@@ -242,7 +210,6 @@ export const MultiClientPortfolio: React.FC<MultiClientPortfolioProps> = ({
                 <th className="p-3.5 text-right">CA Période (FCFA)</th>
                 <th className="p-3.5 text-center">À Valider</th>
                 <th className="p-3.5 text-center">Anomalies</th>
-                <th className="p-3.5 text-center">Seuil Auto-IA</th>
                 <th className="p-3.5 text-right">Action</th>
               </tr>
             </thead>
