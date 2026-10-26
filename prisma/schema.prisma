@@ -16,7 +16,7 @@ enum RegimeFiscal {
 
 enum UserRole {
   ADMIN // concepteurs : espace /admin + espace comptable de leur entreprise
-  COMPTABLE // toutes les fonctionnalités sur ses dossiers (créés ou attribués)
+  COMPTABLE // compte principal d'une entreprise, ou propriétaire d'un dossier (User.dossierId)
 }
 
 enum AccountCategory {
@@ -118,10 +118,14 @@ enum SoundType {
 
 // ---------- Modèles ----------
 
+// Une comptabilité. isMain = la comptabilité de l'entreprise elle-même (une par organisation) ;
+// les autres sont des dossiers confiés chacun à un propriétaire (User.dossierId).
 model ClientDossier {
   id                  String       @id @default(uuid())
-  ownerId             String
-  owner               User         @relation("UserDossiers", fields: [ownerId], references: [id], onDelete: Cascade)
+  organizationId      String
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  isMain              Boolean      @default(false)
+  owner               User?        @relation("DossierOwner")
   name                String
   managerName         String
   phone               String
@@ -140,23 +144,10 @@ model ClientDossier {
   notifications  AppNotification[]
   accounts       SyscohadaAccount[]
   invoices       Invoice[]
-  assignments    DossierAssignment[]
+  settings       PlatformSettings?
 
-  @@index([ownerId])
+  @@index([organizationId])
   @@map("client_dossiers")
-}
-
-// Dossier attribué par son créateur à un autre comptable de la même entreprise.
-model DossierAssignment {
-  dossierId String
-  dossier   ClientDossier @relation(fields: [dossierId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime      @default(now())
-
-  @@id([dossierId, userId])
-  @@index([userId])
-  @@map("dossier_assignments")
 }
 
 model Organization {
@@ -164,6 +155,7 @@ model Organization {
   name      String
   createdAt DateTime @default(now())
   users     User[]
+  dossiers  ClientDossier[]
 
   @@map("organizations")
 }
@@ -257,9 +249,11 @@ model AppNotification {
   @@map("app_notifications")
 }
 
-// Réglages globaux de la plateforme (une seule ligne applicative)
+// Réglages d'un dossier (ceux du dossier principal sont recopiés sur tous les dossiers de l'entreprise).
 model PlatformSettings {
   id                         String            @id @default(uuid())
+  dossierId                  String            @unique
+  dossier                    ClientDossier     @relation(fields: [dossierId], references: [id], onDelete: Cascade)
   syscohadaVersion           String
   cashDeductibilityThreshold Decimal           @db.Decimal(14, 2)
   defaultVatRate             Decimal           @db.Decimal(5, 2)
@@ -297,14 +291,9 @@ model User {
 
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  // Comptable qui a créé ce compte (null : inscription publique ou création par l'admin).
-  createdById    String?
-  createdBy      User?        @relation("CreatedUsers", fields: [createdById], references: [id], onDelete: SetNull)
-  createdUsers   User[]       @relation("CreatedUsers")
-
-  // Dossiers créés (propriétaire) et dossiers attribués.
-  dossiers    ClientDossier[]     @relation("UserDossiers")
-  assignments DossierAssignment[]
+  // null : compte principal de l'entreprise ; sinon propriétaire de ce seul dossier.
+  dossierId      String?        @unique
+  dossier        ClientDossier? @relation("DossierOwner", fields: [dossierId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
 

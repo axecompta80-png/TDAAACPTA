@@ -1,19 +1,17 @@
 import React, { useState, useRef } from 'react';
-import { ClientDossier, PlatformSettings, JournalEntry } from '../types';
+import { ClientDossier, DossierInfo, PlatformSettings, JournalEntry } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import { soundManager, SOUND_OPTIONS, SoundType } from '../utils/sound';
 import { deviceNotificationStatus, requestDeviceNotifications } from '../utils/deviceNotify';
 import { OHADA_COUNTRIES, ACTIVITY_SECTORS, FISCAL_REGIMES } from '../data/initialSettings';
 import { CurrentUser } from '../utils/authApi';
-import { AccountTeamPanel } from './settings/AccountTeamPanel';
+import { AccountPanel } from './settings/AccountPanel';
 import { 
   Settings, 
   X, 
   Building2, 
-  Plus, 
   Edit3, 
   Trash2, 
-  Copy, 
   Check, 
   Sliders, 
   Sparkles, 
@@ -47,13 +45,11 @@ interface SettingsModalProps {
   entries: JournalEntry[];
   settings: PlatformSettings;
   onUpdateSettings: (newSettings: PlatformSettings) => void;
-  onCreateDossier: (dossierData: Omit<ClientDossier, 'id' | 'ownerId' | 'ownerName'>) => void;
   onUpdateDossier: (updatedDossier: ClientDossier) => void;
   onDeleteDossier: (dossierId: string) => void;
   onSelectDossier: (dossier: ClientDossier) => void;
-  onImportBackup?: (backupData: { dossiers: ClientDossier[]; entries: JournalEntry[]; settings: PlatformSettings }) => void;
+  onImportBackup?: (backupData: { dossiers: ClientDossier[]; entries: JournalEntry[] }) => void;
   currentUser: CurrentUser;
-  onDossierChanged: (dossier: ClientDossier) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -64,15 +60,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   entries,
   settings,
   onUpdateSettings,
-  onCreateDossier,
   onUpdateDossier,
   onDeleteDossier,
   onSelectDossier,
   onImportBackup,
-  currentUser,
-  onDossierChanged
+  currentUser
 }) => {
   const { isDark } = useTheme();
+  // Niveau Entreprise (compte principal sur la comptabilité de l'entreprise) : les réglages
+  // s'appliquent à tous les dossiers, et la liste permet de gérer chaque dossier.
+  const isEntrepriseLevel = activeDossier.isMain && !currentUser.dossierId;
 
   // Active tab in Settings
   const [activeTab, setActiveTab] = useState<'dossiers' | 'compte' | 'syscohada' | 'ai' | 'audio' | 'display' | 'backup'>('dossiers');
@@ -80,12 +77,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // Search filter for dossiers
   const [dossierSearch, setDossierSearch] = useState('');
 
-  // Project / Dossier Form State (for Create & Edit)
+  // Formulaire de modification des informations d'un dossier
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingDossierId, setEditingDossierId] = useState<string | null>(null);
   
   // Dossier Form Fields
-  const [formData, setFormData] = useState<Omit<ClientDossier, 'id' | 'ownerId' | 'ownerName'>>({
+  const [formData, setFormData] = useState<DossierInfo>({
     name: '',
     managerName: '',
     phone: '',
@@ -118,25 +115,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setTimeout(() => setFeedbackMsg(null), 3000);
   };
 
-  // Open Create Form
-  const handleOpenCreateForm = () => {
-    setEditingDossierId(null);
-    setFormData({
-      name: '',
-      managerName: '',
-      phone: '+225 ',
-      activity: '',
-      city: 'Abidjan',
-      country: "Côte d'Ivoire",
-      rccm: 'CI-ABJ-2026-B-',
-      ifu: '',
-      regimeFiscal: 'Réel Simplifié',
-      confidenceThreshold: 85,
-      currency: 'FCFA'
-    });
-    setIsFormOpen(true);
-  };
-
   // Open Edit Form
   const handleOpenEditForm = (dossier: ClientDossier) => {
     setEditingDossierId(dossier.id);
@@ -156,7 +134,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setIsFormOpen(true);
   };
 
-  // Save Dossier (Create or Update)
+  // Enregistrer les informations du dossier
   const handleSaveDossier = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim()) {
@@ -164,18 +142,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       return;
     }
 
-    if (editingDossierId) {
-      const existing = dossiers.find(d => d.id === editingDossierId);
-      onUpdateDossier({
-        ...formData,
-        id: editingDossierId,
-        ownerId: existing?.ownerId ?? '',
-        ownerName: existing?.ownerName
-      });
-      showFeedback(`Projet "${formData.name}" mis à jour avec succès.`);
-    } else {
-      onCreateDossier(formData);
-      showFeedback(`Nouveau projet "${formData.name}" créé avec succès.`);
+    const existing = dossiers.find(d => d.id === editingDossierId);
+    if (existing) {
+      onUpdateDossier({ ...existing, ...formData });
+      showFeedback(`"${formData.name}" mis à jour avec succès.`);
     }
     setIsFormOpen(false);
     setEditingDossierId(null);
@@ -188,25 +158,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const name = dossierToDelete.name;
     onDeleteDossier(dossierToDelete.id);
     setDossierToDelete(null);
-    showFeedback(`Le projet "${name}" et ses liaisons ont été supprimés.`);
-  };
-
-  // Duplicate Dossier
-  const handleDuplicateDossier = (dossier: ClientDossier) => {
-    onCreateDossier({
-      name: `${dossier.name} (Copie)`,
-      managerName: dossier.managerName,
-      phone: dossier.phone,
-      activity: dossier.activity,
-      city: dossier.city,
-      country: dossier.country,
-      rccm: `${dossier.rccm}-DUP`,
-      ifu: `${dossier.ifu}-DUP`,
-      regimeFiscal: dossier.regimeFiscal,
-      confidenceThreshold: dossier.confidenceThreshold,
-      currency: dossier.currency
-    });
-    showFeedback(`Projet dupliqué avec succès.`);
+    showFeedback(`Le dossier "${name}" et le compte de son propriétaire ont été supprimés.`);
   };
 
   // Handle Country selection and auto-adjust currency and default VAT
@@ -232,8 +184,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       exportDate: new Date().toISOString(),
       platform: 'AxeCompta SYSCOHADA v2026',
       dossiers,
-      entries,
-      settings
+      entries
     };
 
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
@@ -258,8 +209,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         if (parsed.dossiers && Array.isArray(parsed.dossiers) && onImportBackup) {
           onImportBackup({
             dossiers: parsed.dossiers,
-            entries: parsed.entries || [],
-            settings: parsed.settings || settings
+            entries: parsed.entries || []
           });
           showFeedback('Sauvegarde restaurée avec succès.');
         } else {
@@ -273,8 +223,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // Filtered dossiers list
-  const filteredDossiers = dossiers.filter(d => 
+  // Niveau Entreprise : l'entreprise et tous ses dossiers ; sinon uniquement le dossier courant.
+  const filteredDossiers = (isEntrepriseLevel ? dossiers : [activeDossier]).filter(d => 
     d.name.toLowerCase().includes(dossierSearch.toLowerCase()) ||
     d.activity.toLowerCase().includes(dossierSearch.toLowerCase()) ||
     d.country.toLowerCase().includes(dossierSearch.toLowerCase()) ||
@@ -305,14 +255,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-lg font-black font-heading tracking-wide">
-                  Paramètres de la Plateforme & Projets
+                  {isEntrepriseLevel ? "Paramètres de l'entreprise" : 'Paramètres du dossier'}
                 </h2>
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[#7024E3]/15 text-[#7024E3] dark:text-[#C4B5FD] font-mono">
                   v2026 AUDCIF
                 </span>
               </div>
               <p className="text-xs text-[#7C709A] dark:text-[#A594C9] mt-0.5">
-                Gestion des dossiers clients, normes SYSCOHADA, intelligence artificielle, sons et sauvegardes
+                {isEntrepriseLevel
+                  ? `${activeDossier.name} : ces paramètres s'appliquent à l'entreprise et sont recopiés sur tous ses dossiers.`
+                  : `${activeDossier.name} : ces paramètres ne concernent que ce dossier.`}
               </p>
             </div>
           </div>
@@ -348,12 +300,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             >
               <div className="flex items-center gap-2.5">
                 <Building2 className="w-4 h-4" />
-                <span>Projets & Dossiers</span>
+                <span>{isEntrepriseLevel ? 'Entreprise & Dossiers' : 'Informations du dossier'}</span>
               </div>
               <span className={`text-[11px] font-mono px-1.5 py-0.5 rounded-full ${
                 activeTab === 'dossiers' ? 'bg-white/20 text-white' : 'bg-[#EDE9FE] dark:bg-[#2A164F] text-[#7024E3] dark:text-[#C4B5FD]'
               }`}>
-                {dossiers.length}
+                {filteredDossiers.length}
               </span>
             </button>
 
@@ -439,20 +391,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                   <div>
                     <h3 className="text-base font-black font-heading text-[#1E084A] dark:text-[#F3EFFF]">
-                      Gestion des Projets d'Entreprise
+                      {isEntrepriseLevel ? "L'entreprise et ses dossiers" : 'Informations du dossier'}
                     </h3>
                     <p className="text-xs text-[#7C709A] dark:text-[#A594C9] mt-0.5">
-                      Créez, modifiez, dupliquez ou supprimez vos dossiers comptables OHADA.
+                      {isEntrepriseLevel
+                        ? 'Modifiez les informations ou supprimez un dossier. Pour en créer un, utilisez « Ajouter un Dossier » dans la barre du haut.'
+                        : 'Fiche signalétique et identifiants fiscaux de ce dossier.'}
                     </p>
                   </div>
-
-                  <button
-                    onClick={handleOpenCreateForm}
-                    className="px-4 py-2 bg-gradient-to-r from-[#7024E3] to-[#8B5CF6] hover:from-[#5B18C4] hover:to-[#7024E3] text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Nouveau Projet Entreprise</span>
-                  </button>
                 </div>
 
                 {/* Search in dossiers */}
@@ -493,7 +439,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               {isActive ? (
                                 <span className="text-[11px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#10B981]/15 text-[#059669] dark:text-[#34D399] flex items-center gap-1">
                                   <Check className="w-3 h-3" />
-                                  <span>Dossier Actif</span>
+                                  <span>Actif</span>
                                 </span>
                               ) : (
                                 <button
@@ -516,7 +462,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             </div>
 
                             <p className="text-xs text-[#534674] dark:text-[#A594C9]">
-                              {dossier.activity}
+                              {dossier.isMain ? 'Entreprise' : `Dossier de ${dossier.ownerName ?? '—'}`} • {dossier.activity}
                             </p>
 
                             {/* Meta items */}
@@ -546,26 +492,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               <span>Modifier</span>
                             </button>
 
-                            <button
-                              onClick={() => handleDuplicateDossier(dossier)}
-                              className="p-2 bg-[#F5F3FF] dark:bg-[#251348] border border-[#DDD6FE] dark:border-[#381D66] hover:border-[#7024E3] text-[#534674] dark:text-[#C4B5FD] rounded-xl transition-colors"
-                              title="Dupliquer ce projet"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                            </button>
-
-                            <button
-                              onClick={() => setDossierToDelete(dossier)}
-                              disabled={dossiers.length <= 1 || dossier.ownerId !== currentUser.id}
-                              className={`p-2 rounded-xl border transition-colors ${
-                                dossiers.length <= 1 || dossier.ownerId !== currentUser.id
-                                  ? 'opacity-40 cursor-not-allowed border-gray-200 dark:border-gray-800 text-gray-400'
-                                  : 'bg-white dark:bg-[#1A0E34] border-[#FEE2E2] dark:border-[#4B1924] text-[#EF4444] hover:bg-[#FEE2E2] dark:hover:bg-[#4B1924]'
-                              }`}
-                              title={dossier.ownerId !== currentUser.id ? "Seul le créateur du dossier peut le supprimer" : dossiers.length <= 1 ? "Impossible de supprimer le seul dossier restant" : "Supprimer ce projet"}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {isEntrepriseLevel && !dossier.isMain && (
+                              <button
+                                onClick={() => setDossierToDelete(dossier)}
+                                className="p-2 rounded-xl border transition-colors bg-white dark:bg-[#1A0E34] border-[#FEE2E2] dark:border-[#4B1924] text-[#EF4444] hover:bg-[#FEE2E2] dark:hover:bg-[#4B1924]"
+                                title="Supprimer ce dossier et le compte de son propriétaire"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -577,7 +512,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             {/* ================= TAB 2: NORMES SYSCOHADA & FISCALITÉ ================= */}
             {activeTab === 'compte' && (
-              <AccountTeamPanel currentUser={currentUser} dossiers={dossiers} onDossierChanged={onDossierChanged} />
+              <AccountPanel />
             )}
 
             {activeTab === 'syscohada' && (
@@ -1026,8 +961,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       onChange={e => onUpdateSettings({ ...settings, defaultStartupView: e.target.value as any })}
                       className="w-full p-2.5 bg-white dark:bg-[#150A2A] border border-[#DDD6FE] dark:border-[#35225E] rounded-xl text-xs"
                     >
-                      <option value="simplified">Mode Simple (Reçus & Trésorerie)</option>
-                      <option value="expert">Mode Avancé (Journal & Grand Livre)</option>
+                      <option value="simplified">Mode Entrepreneur (Reçus & Trésorerie)</option>
+                      <option value="expert">Mode Comptable (Journal & Grand Livre)</option>
                     </select>
                     <p className="text-[12px] text-[#7C709A]">
                       Définit l'écran principal chargé à l'ouverture de l'application.
@@ -1166,7 +1101,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
                 <div>
                   <h3 className="text-base font-black font-heading">
-                    {editingDossierId ? 'Modifier le Projet / Dossier' : 'Nouveau Projet Entreprise OHADA'}
+                    {dossiers.find(d => d.id === editingDossierId)?.isMain ? "Modifier les informations de l'entreprise" : 'Modifier le dossier'}
                   </h3>
                   <p className="text-xs text-[#7C709A] dark:text-[#A594C9]">
                     Fiche signalétique, identifiants fiscaux et seuil d'auto-imputation
@@ -1352,7 +1287,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   type="submit"
                   className="px-5 py-2 bg-[#7024E3] hover:bg-[#5B18C4] text-white rounded-xl font-bold transition-all shadow-xs"
                 >
-                  {editingDossierId ? 'Enregistrer les modifications' : 'Créer le projet'}
+                  Enregistrer les modifications
                 </button>
               </div>
             </form>
@@ -1374,13 +1309,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
               <div className="space-y-1">
                 <h3 className="text-base font-black text-[#EF4444]">
-                  Supprimer ce projet entreprise ?
+                  Supprimer ce dossier ?
                 </h3>
                 <p className="text-xs text-[#534674] dark:text-[#A594C9] leading-relaxed">
                   Vous êtes sur le point de supprimer le dossier <strong>"{dossierToDelete.name}"</strong> (RCCM: {dossierToDelete.rccm}).
                 </p>
                 <p className="text-[12px] text-[#7C709A] dark:text-[#8E7BB8]">
-                  Ce dossier compte actuellement {entries.filter(e => e.clientDossierId === dossierToDelete.id).length} écriture(s) associée(s).
+                  Ce dossier compte actuellement {entries.filter(e => e.clientDossierId === dossierToDelete.id).length} écriture(s) associée(s). Le compte de son propriétaire{dossierToDelete.ownerName ? ` (${dossierToDelete.ownerName})` : ''} sera aussi supprimé.
                 </p>
               </div>
             </div>

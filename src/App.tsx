@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ClientDossier, JournalEntry, AppNotification, NotificationType, NotificationCategory, PlatformSettings, Invoice } from './types';
+import { ClientDossier, DossierDirectoryItem, DossierInfo, JournalEntry, AppNotification, NotificationType, NotificationCategory, PlatformSettings, Invoice } from './types';
 import { registerCustomAccounts } from './data/syscohadaPlan';
 import { showDeviceNotification } from './utils/deviceNotify';
 import { DEFAULT_PLATFORM_SETTINGS } from './data/initialSettings';
@@ -20,7 +20,8 @@ import { FinancialStatements } from './components/expert/FinancialStatements';
 import { TaxCompliance } from './components/expert/TaxCompliance';
 import { AuditTrailModal } from './components/expert/AuditTrailModal';
 import { ExcelImportModal } from './components/ExcelImportModal';
-import { FirstDossierSetup } from './components/onboarding/FirstDossierSetup';
+import { CompanySetup } from './components/onboarding/CompanySetup';
+import { AddDossierModal } from './components/AddDossierModal';
 import { InvoicesPanel } from './components/expert/InvoicesPanel';
 import { ChartOfAccounts } from './components/expert/ChartOfAccounts';
 import { 
@@ -44,12 +45,17 @@ export default function App({ currentUser, onLogout }: AppProps) {
   // Toutes les données métier (dossiers, écritures, notifications, réglages) vivent en base
   // Postgres et sont chargées au montage via /api/bootstrap. Seul le dossier actif reste en
   // préférence locale de navigateur (choix d'affichage, pas une donnée comptable).
+  // Compte principal (dossierId null) : l'entreprise et tous ses dossiers. Propriétaire : son seul dossier.
+  const isMainAccount = !currentUser.dossierId;
   const [isLoaded, setIsLoaded] = useState(false);
-  const [platformSettings, setPlatformSettings] = useState<PlatformSettings>(DEFAULT_PLATFORM_SETTINGS);
+  // Réglages propres à chaque dossier (ceux de l'entreprise sont recopiés sur tous les dossiers).
+  const [settingsByDossier, setSettingsByDossier] = useState<Record<string, PlatformSettings>>({});
   const [currentMode, setCurrentMode] = useState<'simplified' | 'expert'>('simplified');
-  // Page dédiée (Trésorerie & Statistiques), indépendante du mode Simple/Avancé
+  // Page dédiée (Trésorerie & Statistiques), indépendante du mode Entrepreneur/Comptable
   const [activePage, setActivePage] = useState<'home' | 'treasury'>('home');
   const [dossiers, setDossiers] = useState<ClientDossier[]>([]);
+  const [directory, setDirectory] = useState<DossierDirectoryItem[]>([]);
+  const [isAddDossierOpen, setIsAddDossierOpen] = useState(false);
   const [activeDossierId, setActiveDossierId] = useState<string>('');
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -67,9 +73,9 @@ export default function App({ currentUser, onLogout }: AppProps) {
 
         registerCustomAccounts(data.accounts ?? []);
         setInvoices(data.invoices ?? []);
-        setPlatformSettings(data.settings);
-        setCurrentMode(data.settings.defaultStartupView || 'simplified');
+        setSettingsByDossier(data.settingsByDossier);
         setDossiers(data.dossiers);
+        setDirectory(data.directory);
         setEntries(data.entries);
         setNotifications(data.notifications);
 
@@ -77,10 +83,11 @@ export default function App({ currentUser, onLogout }: AppProps) {
         try {
           savedId = localStorage.getItem('axecompta_active_dossier_id');
         } catch (e) { /* ignore */ }
-        const initialId = savedId && data.dossiers.some(d => d.id === savedId)
-          ? savedId
-          : data.dossiers[0]?.id || '';
+        // Un propriétaire arrive toujours sur son dossier ; le principal reprend le dernier ouvert, sinon l'entreprise.
+        const initialId = currentUser.dossierId
+          ?? (savedId && data.dossiers.some(d => d.id === savedId) ? savedId : data.dossiers[0]?.id || '');
         setActiveDossierId(initialId);
+        setCurrentMode(data.settingsByDossier[initialId]?.defaultStartupView || 'simplified');
       } catch (e) {
         console.error('Erreur de chargement des données AxeCompta', e);
       } finally {
@@ -92,6 +99,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
 
   // Expert navigation tab
   const [expertTab, setExpertTab] = useState<'portfolio' | 'journal' | 'invoices' | 'accounts' | 'ledger' | 'financials' | 'tax'>('journal');
+  const showExpertTab = (tab: typeof expertTab) => setExpertTab(tab === 'portfolio' && !isMainAccount ? 'journal' : tab);
   
   // Modals & Panels
   const [selectedAuditEntry, setSelectedAuditEntry] = useState<JournalEntry | null>(null);
@@ -102,11 +110,6 @@ export default function App({ currentUser, onLogout }: AppProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Sync settings with SoundManager
-  useEffect(() => {
-    soundManager.setSoundType(platformSettings.soundType);
-  }, [platformSettings]);
-
   // Le dossier actif est une simple préférence d'affichage locale, pas une donnée comptable.
   useEffect(() => {
     if (typeof window !== 'undefined' && activeDossierId) {
@@ -115,6 +118,14 @@ export default function App({ currentUser, onLogout }: AppProps) {
   }, [activeDossierId]);
 
   const activeDossier = dossiers.find(d => d.id === activeDossierId) || dossiers[0];
+  const platformSettings = (activeDossier && settingsByDossier[activeDossier.id]) || DEFAULT_PLATFORM_SETTINGS;
+  // Niveau Entreprise : compte principal sur la comptabilité de l'entreprise (vues consolidées).
+  const isEntrepriseLevel = isMainAccount && Boolean(activeDossier?.isMain);
+
+  // Sync settings with SoundManager
+  useEffect(() => {
+    soundManager.setSoundType(platformSettings.soundType);
+  }, [platformSettings]);
 
   if (!isLoaded) {
     return (
@@ -127,14 +138,17 @@ export default function App({ currentUser, onLogout }: AppProps) {
     );
   }
 
-  // Compte vierge : aucun dossier. On invite l'utilisateur à créer son premier dossier,
-  // qui lui sera rattaché (aucune donnée de démonstration n'est injectée).
+  // Compte principal sans informations d'entreprise (juste après l'inscription) : on les demande,
+  // puis il arrive directement dans l'interface comptable en mode Entrepreneur.
   if (!activeDossier) {
+    if (!isMainAccount) {
+      return <div className="min-h-screen flex items-center justify-center text-sm font-bold text-[#1E084A]">Dossier introuvable. Contactez le compte principal de votre entreprise.</div>;
+    }
     return (
-      <FirstDossierSetup
+      <CompanySetup
         currentUser={currentUser}
         onLogout={onLogout}
-        onCreateDossier={handleCreateDossier}
+        onSubmit={handleSetupCompany}
       />
     );
   }
@@ -325,37 +339,43 @@ export default function App({ currentUser, onLogout }: AppProps) {
     }
   };
 
-  // Project / Dossier Management handlers
-  async function handleCreateDossier(newDossierData: Omit<ClientDossier, 'id' | 'ownerId' | 'ownerName'>): Promise<ClientDossier> {
-    try {
-      const newDossier = await api.createDossier(newDossierData);
-      setDossiers(prev => [...prev, newDossier]);
-      setActiveDossierId(newDossier.id);
-
-      pushNotification(
-        'Nouveau Dossier Créé',
-        `Le dossier "${newDossier.name}" (${newDossier.country}) a été créé avec succès et sélectionné comme dossier actif.`,
-        'success',
-        'system',
-        {
-          actionLabel: 'Voir le portefeuille',
-          actionPayload: { mode: 'expert', expertTab: 'portfolio' }
-        }
-      );
-
-      showToast(`Dossier "${newDossier.name}" créé avec succès.`);
-      return newDossier;
-    } catch (e) {
-      console.error('Erreur lors de la création du dossier', e);
-      showToast('Erreur lors de la création du dossier.');
-      throw e;
-    }
+  // Entreprise & dossiers
+  async function handleSetupCompany(company: DossierInfo) {
+    const main = await api.setupCompany(company);
+    const data = await api.getBootstrap();
+    setSettingsByDossier(data.settingsByDossier);
+    setDirectory(data.directory);
+    setDossiers(data.dossiers);
+    setActiveDossierId(main.id);
+    setCurrentMode('simplified');
   }
+
+  /** Ouvre un dossier de la liste, ou explique qu'il est hors périmètre (le serveur refuse de toute façon). */
+  const handleSelectDossier = (id: string) => {
+    if (dossiers.some(d => d.id === id)) setActiveDossierId(id);
+    else showToast("Vous n'avez pas accès à ce dossier.");
+  };
+
+  const handleDossierAdded = (created: ClientDossier) => {
+    setDossiers(prev => [...prev, created]);
+    setDirectory(prev => [...prev, { id: created.id, name: created.name, isMain: false, ownerName: created.ownerName }]);
+    // Réglages recopiés de l'entreprise côté serveur.
+    setSettingsByDossier(prev => ({ ...prev, [created.id]: prev[activeDossier.id] ?? DEFAULT_PLATFORM_SETTINGS }));
+    setIsAddDossierOpen(false);
+    pushNotification(
+      'Nouveau dossier créé',
+      `Le dossier "${created.name}" a été confié à ${created.ownerName}. Il peut se connecter avec son email et son mot de passe.`,
+      'success',
+      'system',
+      { actionLabel: 'Voir le portefeuille', actionPayload: { mode: 'expert', expertTab: 'portfolio' } }
+    );
+  };
 
   const handleUpdateDossier = async (updatedDossier: ClientDossier) => {
     try {
       const saved = await api.updateDossier(updatedDossier);
       setDossiers(prev => prev.map(d => d.id === saved.id ? saved : d));
+      setDirectory(prev => prev.map(d => d.id === saved.id ? { ...d, name: saved.name } : d));
 
       pushNotification(
         'Dossier Mis à Jour',
@@ -372,32 +392,29 @@ export default function App({ currentUser, onLogout }: AppProps) {
   };
 
   const handleDeleteDossier = async (dossierId: string) => {
-    if (dossiers.length <= 1) {
-      showToast('Impossible de supprimer le seul dossier du cabinet.');
-      return;
-    }
-
     const dossierToDelete = dossiers.find(d => d.id === dossierId);
+    if (!dossierToDelete || dossierToDelete.isMain) return;
     try {
       await api.deleteDossier(dossierId);
       const remainingDossiers = dossiers.filter(d => d.id !== dossierId);
 
       if (activeDossierId === dossierId) {
-        setActiveDossierId(remainingDossiers[0].id);
+        setActiveDossierId(remainingDossiers.find(d => d.isMain)?.id ?? remainingDossiers[0]?.id ?? '');
       }
 
       setDossiers(remainingDossiers);
+      setDirectory(prev => prev.filter(d => d.id !== dossierId));
       setEntries(prev => prev.filter(e => e.clientDossierId !== dossierId));
       setNotifications(prev => prev.filter(n => n.dossierId !== dossierId));
 
       pushNotification(
         'Dossier Supprimé',
-        `Le dossier "${dossierToDelete?.name || dossierId}" a été retiré du portefeuille cabinet.`,
+        `Le dossier "${dossierToDelete.name}" et le compte de son propriétaire ont été supprimés.`,
         'warning',
         'system'
       );
 
-      showToast(`Dossier "${dossierToDelete?.name}" supprimé.`);
+      showToast(`Dossier "${dossierToDelete.name}" supprimé.`);
     } catch (e) {
       console.error('Erreur lors de la suppression du dossier', e);
       showToast('Erreur lors de la suppression du dossier.');
@@ -406,9 +423,11 @@ export default function App({ currentUser, onLogout }: AppProps) {
 
   const handleUpdatePlatformSettings = async (newSettings: PlatformSettings) => {
     try {
-      const saved = await api.updateSettings(newSettings);
-      setPlatformSettings(saved);
-      showToast('Paramètres de la plateforme enregistrés.');
+      const { settings: saved, propagated } = await api.updateSettings(activeDossier.id, newSettings);
+      setSettingsByDossier(prev => propagated
+        ? Object.fromEntries(Object.keys({ ...prev, [activeDossier.id]: saved }).map(id => [id, saved]))
+        : { ...prev, [activeDossier.id]: saved });
+      showToast(propagated ? "Paramètres enregistrés pour l'entreprise et tous ses dossiers." : 'Paramètres du dossier enregistrés.');
     } catch (e) {
       console.error('Erreur lors de la mise à jour des paramètres', e);
       showToast('Erreur lors de l\'enregistrement des paramètres.');
@@ -416,31 +435,28 @@ export default function App({ currentUser, onLogout }: AppProps) {
   };
 
   const handleImportBackup = async (backupData: {
-    settings?: PlatformSettings;
     dossiers?: ClientDossier[];
     entries?: JournalEntry[];
   }) => {
     try {
       const data = await api.importBackup(backupData);
-      setPlatformSettings(data.settings);
+      setSettingsByDossier(data.settingsByDossier);
       setDossiers(data.dossiers);
-      if (!data.dossiers.some(d => d.id === activeDossierId)) {
-        setActiveDossierId(data.dossiers[0]?.id || '');
-      }
+      setDirectory(data.directory);
       setEntries(data.entries);
       setNotifications(data.notifications);
 
       soundManager.play('fintech_chime');
       pushNotification(
         'Restauration effectuée',
-        'Les données et paramètres de la plateforme ont été restaurés depuis votre sauvegarde.',
+        'Les dossiers et écritures ont été restaurés depuis votre sauvegarde.',
         'success',
         'system'
       );
       showToast('Sauvegarde restaurée avec succès.');
-    } catch (e) {
+    } catch (e: any) {
       console.error('Erreur lors de la restauration de la sauvegarde', e);
-      showToast('Erreur lors de la restauration de la sauvegarde.');
+      showToast(e?.message || 'Erreur lors de la restauration de la sauvegarde.');
     }
   };
 
@@ -480,9 +496,10 @@ export default function App({ currentUser, onLogout }: AppProps) {
       <Header
         currentMode={currentMode}
         onModeChange={(mode) => { setCurrentMode(mode); setActivePage('home'); }}
-        dossiers={dossiers}
+        directory={directory}
         activeDossier={activeDossier}
-        onSelectDossier={(d) => setActiveDossierId(d.id)}
+        onSelectDossier={handleSelectDossier}
+        onAddDossier={isMainAccount ? () => setIsAddDossierOpen(true) : undefined}
         pendingValidationCount={pendingCount}
         anomalyCount={anomalyCount}
         onOpenExcelImport={() => setIsExcelImportOpen(true)}
@@ -502,12 +519,13 @@ export default function App({ currentUser, onLogout }: AppProps) {
           <TreasuryPage
             entries={liveEntries}
             activeDossier={activeDossier}
+            consolidated={isEntrepriseLevel ? dossiers : undefined}
             onOpenCreditReady={() => setIsCreditReadyOpen(true)}
             onOpenNewInvoice={() => setIsQuickInvoiceOpen(true)}
           />
         )}
 
-        {/* ================= PERSONA A: ENTREPRENEUR (SIMPLIFIÉ) ================= */}
+        {/* ================= MODE ENTREPRENEUR ================= */}
         {activePage === 'home' && currentMode === 'simplified' && (
           <div className="space-y-6">
             {/* Agent conversationnel : seul contenu de cette vue, centré et agrandi
@@ -524,13 +542,13 @@ export default function App({ currentUser, onLogout }: AppProps) {
           </div>
         )}
 
-        {/* ================= PERSONA B: EXPERT-COMPTABLE (CABINET) ================= */}
+        {/* ================= MODE COMPTABLE ================= */}
         {activePage === 'home' && currentMode === 'expert' && (
           <div className="space-y-5">
             {/* Expert Navigation Tabs Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3 bg-[#1E084A] text-white p-2 rounded-xl border border-[#3B1578] shadow-md">
               <div className="flex flex-wrap items-center gap-1.5">
-                <button
+                {isMainAccount && <button
                   onClick={() => setExpertTab('portfolio')}
                   className={`px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
                     expertTab === 'portfolio' 
@@ -540,7 +558,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
                 >
                   <Building2 className="w-4 h-4" />
                   <span>Portefeuille Multi-Dossiers</span>
-                </button>
+                </button>}
 
                 <button
                   onClick={() => setExpertTab('journal')}
@@ -624,7 +642,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
               <div className="flex items-center gap-3">
                 <div className="text-right hidden sm:block pr-2">
                   <span className="text-[10.5px] font-mono text-[#A78BFA] uppercase tracking-wider block font-bold">
-                    Dossier Supervisé
+                    {activeDossier.isMain ? 'Entreprise' : 'Dossier'}
                   </span>
                   <span className="text-xs font-bold text-white">{activeDossier.name}</span>
                 </div>
@@ -632,7 +650,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
             </div>
 
             {/* Expert View Content */}
-            {expertTab === 'portfolio' && (
+            {expertTab === 'portfolio' && isMainAccount && (
               <MultiClientPortfolio
                 dossiers={dossiers}
                 activeDossier={activeDossier}
@@ -642,7 +660,6 @@ export default function App({ currentUser, onLogout }: AppProps) {
                   setExpertTab('journal');
                 }}
                 onUpdateConfidenceThreshold={handleUpdateConfidenceThreshold}
-                groupByOwner={dossiers.some(d => d.ownerId !== currentUser.id)}
               />
             )}
 
@@ -776,7 +793,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
         onClearAll={handleClearAllNotifications}
         onNavigateAction={(payload) => {
           if (payload.mode) setCurrentMode(payload.mode);
-          if (payload.expertTab) setExpertTab(payload.expertTab as typeof expertTab);
+          if (payload.expertTab) showExpertTab(payload.expertTab as typeof expertTab);
         }}
       />
 
@@ -788,15 +805,17 @@ export default function App({ currentUser, onLogout }: AppProps) {
         onUpdateSettings={handleUpdatePlatformSettings}
         dossiers={dossiers}
         activeDossier={activeDossier}
-        onSelectDossier={(d) => setActiveDossierId(d.id)}
-        onCreateDossier={handleCreateDossier}
+        onSelectDossier={(d) => handleSelectDossier(d.id)}
         onUpdateDossier={handleUpdateDossier}
         onDeleteDossier={handleDeleteDossier}
         entries={entries}
         onImportBackup={handleImportBackup}
         currentUser={currentUser}
-        onDossierChanged={(saved) => setDossiers(prev => prev.map(d => d.id === saved.id ? saved : d))}
       />
+
+      {isAddDossierOpen && (
+        <AddDossierModal onClose={() => setIsAddDossierOpen(false)} onCreated={handleDossierAdded} />
+      )}
     </div>
   );
 }

@@ -3,6 +3,8 @@ export interface CurrentUser {
   email: string;
   name: string;
   role: 'ADMIN' | 'COMPTABLE';
+  /** null : compte principal de l'entreprise ; sinon propriétaire de ce seul dossier. */
+  dossierId: string | null;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -27,6 +29,7 @@ export const authApi = {
   me: () => request<CurrentUser>('/me'),
   login: (email: string, password: string) =>
     request<CurrentUser>('/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  /** name = nom de l'entreprise. */
   signup: (email: string, name: string, password: string) =>
     request<CurrentUser>('/signup', { method: 'POST', body: JSON.stringify({ email, name, password }) }),
   logout: () => request<void>('/logout', { method: 'POST' }),

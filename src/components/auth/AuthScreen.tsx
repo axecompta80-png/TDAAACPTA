@@ -68,7 +68,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
         <form onSubmit={handleSubmit} className="space-y-4">
           {mode === 'signup' && (
             <div>
-              <label className="text-xs font-bold text-[#534674] mb-1 block">Nom complet</label>
+              <label className="text-xs font-bold text-[#534674] mb-1 block">Nom de l'entreprise</label>
               <div className="relative">
                 <UserIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#A78BFA]" />
                 <input
@@ -77,7 +77,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
                   value={name}
                   onChange={e => setName(e.target.value)}
                   className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-[#DDD6FE] text-sm focus:outline-none focus:ring-2 focus:ring-[#7024E3]"
-                  placeholder="Nathan"
+                  placeholder="ex : Quincaillerie Moderne SARL"
                 />
               </div>
             </div>

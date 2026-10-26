@@ -2,7 +2,7 @@
  * Validation stricte des entrées API (whitelist de champs + types + bornes).
  *
  * Aucune valeur du client n'est écrite telle quelle en base : chaque champ est
- * validé, normalisé et borné. Les identifiants de propriété (ownerId) ne sont
+ * validé, normalisé et borné. Les identifiants de propriété (entreprise, dossier) ne sont
  * jamais acceptés depuis le client, ils proviennent de la session serveur.
  */
 

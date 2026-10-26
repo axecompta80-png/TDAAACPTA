@@ -32,6 +32,10 @@ export interface AuthTokenPayload {
   sub: string;
   email: string;
   role: string;
+  /** Relus en base par requireAuth (jamais pris du jeton). */
+  organizationId?: string;
+  /** null : compte principal de l'entreprise ; sinon propriétaire de ce seul dossier. */
+  dossierId?: string | null;
 }
 
 export function hashPassword(password: string) {
@@ -62,11 +66,11 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   try {
     const token = req.cookies?.[COOKIE_NAME];
     const payload = token ? verifyToken(token) : null;
-    const user = payload ? await prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, email: true, role: true } }) : null;
+    const user = payload ? await prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, email: true, role: true, organizationId: true, dossierId: true } }) : null;
     if (!user) {
       return res.status(401).json({ error: 'Authentification requise.' });
     }
-    (req as any).user = { sub: user.id, email: user.email, role: user.role };
+    (req as any).user = { sub: user.id, email: user.email, role: user.role, organizationId: user.organizationId, dossierId: user.dossierId };
     next();
   } catch (e) {
     next(e);

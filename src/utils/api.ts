@@ -1,10 +1,12 @@
-import type { ClientDossier, JournalEntry, AppNotification, PlatformSettings, SYSCOHADAAccount, Invoice, InvoiceInput } from '../types';
+import type { ClientDossier, DossierDirectoryItem, DossierInfo, JournalEntry, AppNotification, PlatformSettings, SYSCOHADAAccount, Invoice, InvoiceInput } from '../types';
 
 export interface BootstrapData {
   dossiers: ClientDossier[];
+  /** Tous les dossiers de l'entreprise (nom et propriétaire seulement), pour le sélecteur. */
+  directory: DossierDirectoryItem[];
   entries: JournalEntry[];
   notifications: AppNotification[];
-  settings: PlatformSettings;
+  settingsByDossier: Record<string, PlatformSettings>;
   accounts: SYSCOHADAAccount[];
   invoices: Invoice[];
 }
@@ -38,21 +40,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-export interface TeamMember {
-  id: string;
-  name: string;
-  email: string;
-  role: 'ADMIN' | 'COMPTABLE';
-  createdById: string | null;
-  createdAt: string;
-}
-
 export const api = {
   getBootstrap: () => request<BootstrapData>('/bootstrap'),
 
-  // Dossiers comptables
-  createDossier: (data: Omit<ClientDossier, 'id' | 'ownerId' | 'ownerName'>) =>
-    request<ClientDossier>('/dossiers', { method: 'POST', body: JSON.stringify(data) }),
+  // Entreprise et dossiers
+  setupCompany: (data: DossierInfo) => request<ClientDossier>('/company', post(data)),
+  createDossier: (data: { name: string; ownerName: string; email: string; password: string }) =>
+    request<ClientDossier>('/dossiers', post(data)),
   updateDossier: (dossier: ClientDossier) =>
     request<ClientDossier>(`/dossiers/${dossier.id}/update`, { method: 'POST', body: JSON.stringify(dossier) }),
   deleteDossier: (id: string) => request<void>(`/dossiers/${id}/delete`, { method: 'POST' }),
@@ -95,18 +89,11 @@ export const api = {
   deleteNotification: (id: string) => request<void>(`/notifications/${id}/delete`, { method: 'POST' }),
   clearAllNotifications: () => request<void>('/notifications/clear', { method: 'POST' }),
 
-  // Réglages de la plateforme
-  updateSettings: (settings: PlatformSettings) =>
-    request<PlatformSettings>('/settings/update', { method: 'POST', body: JSON.stringify(settings) }),
-
-  // Équipe de l'entreprise et attribution des dossiers
-  getTeam: () => request<{ organizationName: string; members: TeamMember[] }>('/team'),
-  createTeamMember: (data: { name: string; email: string; password: string }) => request<TeamMember>('/team', post(data)),
-  deleteTeamMember: (id: string) => request<void>(`/team/${id}/delete`, post()),
-  assignDossier: (dossierId: string, userId: string) => request<ClientDossier>(`/dossiers/${dossierId}/assignments`, post({ userId })),
-  unassignDossier: (dossierId: string, userId: string) => request<ClientDossier>(`/dossiers/${dossierId}/assignments/${userId}/delete`, post()),
+  // Réglages d'un dossier (ceux de l'entreprise sont recopiés sur tous les dossiers : propagated)
+  updateSettings: (dossierId: string, settings: PlatformSettings) =>
+    request<{ settings: PlatformSettings; propagated: boolean }>('/settings/update', post({ ...settings, dossierId })),
 
   // Sauvegarde / restauration (périmètre de l'utilisateur connecté)
-  importBackup: (backup: { settings?: PlatformSettings; dossiers?: ClientDossier[]; entries?: JournalEntry[] }) =>
+  importBackup: (backup: { dossiers?: ClientDossier[]; entries?: JournalEntry[] }) =>
     request<BootstrapData>('/import-backup', { method: 'POST', body: JSON.stringify(backup) }),
 };

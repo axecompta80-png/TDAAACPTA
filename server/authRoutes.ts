@@ -4,29 +4,31 @@ import { hashPassword, verifyPassword, signToken, verifyToken, requireAuth, getA
 
 const router = Router();
 
-function serializeUser(u: { id: string; email: string; name: string; role: string }) {
-  return { id: u.id, email: u.email, name: u.name, role: u.role };
+/** dossierId null : compte principal de l'entreprise ; sinon propriétaire de ce dossier. */
+function serializeUser(u: { id: string; email: string; name: string; role: string; dossierId: string | null }) {
+  return { id: u.id, email: u.email, name: u.name, role: u.role, dossierId: u.dossierId };
 }
 
 router.post('/signup', async (req, res, next) => {
   try {
+    // name = nom de l'entreprise (le compte qui s'inscrit est le compte principal de l'entreprise).
     const { email, name, password } = req.body ?? {};
-    if (!email || !name || !password) {
-      return res.status(400).json({ error: 'Email, nom et mot de passe requis.' });
+    if (typeof email !== 'string' || typeof name !== 'string' || !email.trim() || !name.trim() || !password) {
+      return res.status(400).json({ error: "Nom de l'entreprise, email et mot de passe requis." });
     }
     if (typeof password !== 'string' || password.length < 8) {
       return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères.' });
     }
 
-    const existing = await prisma.user.findUnique({ where: { email } });
+    const existing = await prisma.user.findUnique({ where: { email: email.trim() } });
     if (existing) {
       return res.status(409).json({ error: 'Un compte existe déjà avec cet email.' });
     }
 
     const passwordHash = await hashPassword(password);
-    // L'inscription publique crée toujours un comptable, avec sa propre entreprise.
+    // L'inscription publique crée toujours un comptable principal, avec sa propre entreprise.
     const user = await prisma.user.create({
-      data: { email, name, passwordHash, role: 'COMPTABLE', organization: { create: { name } } },
+      data: { email: email.trim(), name: name.trim(), passwordHash, role: 'COMPTABLE', organization: { create: { name: name.trim() } } },
     });
 
     const token = signToken({ sub: user.id, email: user.email, role: user.role });

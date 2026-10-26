@@ -49,9 +49,8 @@ export function relativeTimeFr(date: Date): string {
 export function serializeDossier(row: any): ClientDossier {
   return {
     id: row.id,
-    ownerId: row.ownerId,
+    isMain: Boolean(row.isMain),
     ownerName: row.owner?.name ?? undefined,
-    assignees: (row.assignments ?? []).map((a: any) => ({ id: a.user.id, name: a.user.name })),
     name: row.name,
     managerName: row.managerName,
     phone: row.phone,

@@ -138,7 +138,7 @@ export function answerQuestion(question: string, ctx: AgentContext, dossier: Cli
   // À valider / anomalies
   if (/anomalie|verifier|attente|valider|revue|probleme/.test(n)) {
     const r = ctx.review;
-    return `Il y a ${r.pending} écriture(s) en attente de validation et ${r.anomalies} anomalie(s) à examiner, sur ${r.total} écritures. Vous les trouvez dans l'onglet « Journal & Validation » du Mode Avancé.`;
+    return `Il y a ${r.pending} écriture(s) en attente de validation et ${r.anomalies} anomalie(s) à examiner, sur ${r.total} écritures. Vous les trouvez dans l'onglet « Journal & Validation » du Mode Comptable.`;
   }
 
   // Vue d'ensemble

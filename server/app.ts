@@ -115,7 +115,7 @@ app.use('/api', (err: any, req: Request, res: Response, next: NextFunction) => {
 let seeded: Promise<void> | null = null;
 
 /**
- * Garantit le plan comptable SYSCOHADA et les réglages par défaut, une seule fois
+ * Garantit le plan comptable SYSCOHADA (les réglages sont créés avec chaque dossier), une seule fois
  * par instance de processus (démarrage Node classique, ou premier appel après un
  * cold start serverless).
  */
@@ -123,18 +123,11 @@ export function ensureSeeded(): Promise<void> {
   if (!seeded) {
     seeded = (async () => {
       const { prisma } = await import('./db');
-      const { ensureSyscohadaAccounts, createDefaultPlatformSettings } = await import('./seedData');
+      const { ensureSyscohadaAccounts } = await import('./seedData');
       try {
         await ensureSyscohadaAccounts(prisma);
       } catch (e: any) {
         console.error('[AxeCompta] Mise à jour du plan comptable impossible :', e?.message);
-      }
-      try {
-        if ((await prisma.platformSettings.count()) === 0) {
-          await createDefaultPlatformSettings(prisma);
-        }
-      } catch (e: any) {
-        console.error('[AxeCompta] Initialisation des réglages impossible :', e?.message);
       }
     })();
   }

@@ -39,9 +39,8 @@ function relativeTimeFr(date) {
 function serializeDossier(row) {
   return {
     id: row.id,
-    ownerId: row.ownerId,
+    isMain: Boolean(row.isMain),
     ownerName: row.owner?.name ?? void 0,
-    assignees: (row.assignments ?? []).map((a) => ({ id: a.user.id, name: a.user.name })),
     name: row.name,
     managerName: row.managerName,
     phone: row.phone,
@@ -203,42 +202,6 @@ var init_mappers = __esm({
   }
 });
 
-// src/data/initialSettings.ts
-var DEFAULT_PLATFORM_SETTINGS;
-var init_initialSettings = __esm({
-  "src/data/initialSettings.ts"() {
-    DEFAULT_PLATFORM_SETTINGS = {
-      // Comptabilité & SYSCOHADA
-      syscohadaVersion: "SYSCOHADA R\xE9vis\xE9 2026 (AUDCIF)",
-      cashDeductibilityThreshold: 5e5,
-      // 500 000 FCFA selon article OHADA/CGI
-      defaultVatRate: 18,
-      // 18% par défaut zone UEMOA
-      autoFlagLargeCashPayments: true,
-      defaultDebitCashAccount: "5711 - Caisse Principale",
-      defaultCreditSalesAccount: "7011 - Ventes de Marchandises",
-      defaultDebitExpenseAccount: "6011 - Achats de Marchandises",
-      // IA & Seuil d'imputation
-      globalConfidenceThreshold: 85,
-      autoValidateHighConfidence: true,
-      duplicateDetection: true,
-      aiModelPreference: "gemini-2.5-flash",
-      // Préférences & Affichage
-      defaultStartupView: "simplified",
-      numberFormatting: "standard",
-      cabinetName: "Cabinet KM Consulting & Audit OHADA",
-      expertLicenseNumber: "ONECCA-CI N\xB0 2024-889",
-      // Audio & Notifications
-      soundEnabled: true,
-      soundType: "fintech_chime",
-      soundVolume: 0.7,
-      notifyOnAnomaly: true,
-      notifyOnTaxDeadline: true,
-      notifyOnMobileMoneySync: true
-    };
-  }
-});
-
 // src/data/syscohadaPlan.ts
 function getAccountByCode(code) {
   return SYSCOHADA_ACCOUNTS.find((a) => a.code === code || a.code.startsWith(code));
@@ -312,12 +275,50 @@ var init_syscohadaPlan = __esm({
   }
 });
 
+// src/data/initialSettings.ts
+var DEFAULT_PLATFORM_SETTINGS;
+var init_initialSettings = __esm({
+  "src/data/initialSettings.ts"() {
+    DEFAULT_PLATFORM_SETTINGS = {
+      // Comptabilité & SYSCOHADA
+      syscohadaVersion: "SYSCOHADA R\xE9vis\xE9 2026 (AUDCIF)",
+      cashDeductibilityThreshold: 5e5,
+      // 500 000 FCFA selon article OHADA/CGI
+      defaultVatRate: 18,
+      // 18% par défaut zone UEMOA
+      autoFlagLargeCashPayments: true,
+      defaultDebitCashAccount: "5711 - Caisse Principale",
+      defaultCreditSalesAccount: "7011 - Ventes de Marchandises",
+      defaultDebitExpenseAccount: "6011 - Achats de Marchandises",
+      // IA & Seuil d'imputation
+      globalConfidenceThreshold: 85,
+      autoValidateHighConfidence: true,
+      duplicateDetection: true,
+      aiModelPreference: "gemini-2.5-flash",
+      // Préférences & Affichage
+      defaultStartupView: "simplified",
+      numberFormatting: "standard",
+      cabinetName: "Cabinet KM Consulting & Audit OHADA",
+      expertLicenseNumber: "ONECCA-CI N\xB0 2024-889",
+      // Audio & Notifications
+      soundEnabled: true,
+      soundType: "fintech_chime",
+      soundVolume: 0.7,
+      notifyOnAnomaly: true,
+      notifyOnTaxDeadline: true,
+      notifyOnMobileMoneySync: true
+    };
+  }
+});
+
 // server/seedData.ts
 var seedData_exports = {};
 __export(seedData_exports, {
+  copySettings: () => copySettings,
   createDefaultPlatformSettings: () => createDefaultPlatformSettings,
   ensureSyscohadaAccounts: () => ensureSyscohadaAccounts,
-  purgeLegacyDemoData: () => purgeLegacyDemoData
+  purgeLegacyDemoData: () => purgeLegacyDemoData,
+  settingsData: () => settingsData
 });
 async function ensureSyscohadaAccounts(prisma2) {
   for (const acc of SYSCOHADA_ACCOUNTS) {
@@ -328,32 +329,37 @@ async function ensureSyscohadaAccounts(prisma2) {
     });
   }
 }
-async function createDefaultPlatformSettings(prisma2) {
-  return prisma2.platformSettings.create({
-    data: {
-      syscohadaVersion: DEFAULT_PLATFORM_SETTINGS.syscohadaVersion,
-      cashDeductibilityThreshold: DEFAULT_PLATFORM_SETTINGS.cashDeductibilityThreshold,
-      defaultVatRate: DEFAULT_PLATFORM_SETTINGS.defaultVatRate,
-      autoFlagLargeCashPayments: DEFAULT_PLATFORM_SETTINGS.autoFlagLargeCashPayments,
-      defaultDebitCashAccount: DEFAULT_PLATFORM_SETTINGS.defaultDebitCashAccount,
-      defaultCreditSalesAccount: DEFAULT_PLATFORM_SETTINGS.defaultCreditSalesAccount,
-      defaultDebitExpenseAccount: DEFAULT_PLATFORM_SETTINGS.defaultDebitExpenseAccount,
-      globalConfidenceThreshold: DEFAULT_PLATFORM_SETTINGS.globalConfidenceThreshold,
-      autoValidateHighConfidence: DEFAULT_PLATFORM_SETTINGS.autoValidateHighConfidence,
-      duplicateDetection: DEFAULT_PLATFORM_SETTINGS.duplicateDetection,
-      aiModelPreference: AI_MODEL_TO_DB[DEFAULT_PLATFORM_SETTINGS.aiModelPreference],
-      defaultStartupView: DEFAULT_PLATFORM_SETTINGS.defaultStartupView,
-      numberFormatting: DEFAULT_PLATFORM_SETTINGS.numberFormatting,
-      cabinetName: DEFAULT_PLATFORM_SETTINGS.cabinetName,
-      expertLicenseNumber: DEFAULT_PLATFORM_SETTINGS.expertLicenseNumber,
-      soundEnabled: DEFAULT_PLATFORM_SETTINGS.soundEnabled,
-      soundType: DEFAULT_PLATFORM_SETTINGS.soundType,
-      soundVolume: DEFAULT_PLATFORM_SETTINGS.soundVolume,
-      notifyOnAnomaly: DEFAULT_PLATFORM_SETTINGS.notifyOnAnomaly,
-      notifyOnTaxDeadline: DEFAULT_PLATFORM_SETTINGS.notifyOnTaxDeadline,
-      notifyOnMobileMoneySync: DEFAULT_PLATFORM_SETTINGS.notifyOnMobileMoneySync
-    }
-  });
+function settingsData(s) {
+  return {
+    syscohadaVersion: s.syscohadaVersion,
+    cashDeductibilityThreshold: s.cashDeductibilityThreshold,
+    defaultVatRate: s.defaultVatRate,
+    autoFlagLargeCashPayments: s.autoFlagLargeCashPayments,
+    defaultDebitCashAccount: s.defaultDebitCashAccount,
+    defaultCreditSalesAccount: s.defaultCreditSalesAccount,
+    defaultDebitExpenseAccount: s.defaultDebitExpenseAccount,
+    globalConfidenceThreshold: s.globalConfidenceThreshold,
+    autoValidateHighConfidence: s.autoValidateHighConfidence,
+    duplicateDetection: s.duplicateDetection,
+    aiModelPreference: AI_MODEL_TO_DB[s.aiModelPreference],
+    defaultStartupView: s.defaultStartupView,
+    numberFormatting: s.numberFormatting,
+    cabinetName: s.cabinetName,
+    expertLicenseNumber: s.expertLicenseNumber,
+    soundEnabled: s.soundEnabled,
+    soundType: s.soundType,
+    soundVolume: s.soundVolume,
+    notifyOnAnomaly: s.notifyOnAnomaly,
+    notifyOnTaxDeadline: s.notifyOnTaxDeadline,
+    notifyOnMobileMoneySync: s.notifyOnMobileMoneySync
+  };
+}
+function copySettings(row) {
+  const { id: _id, dossierId: _d, updatedAt: _u, ...rest } = row;
+  return rest;
+}
+async function createDefaultPlatformSettings(prisma2, dossierId) {
+  return prisma2.platformSettings.create({ data: { ...settingsData(DEFAULT_PLATFORM_SETTINGS), dossierId } });
 }
 async function purgeLegacyDemoData(prisma2) {
   await prisma2.appNotification.deleteMany();
@@ -374,7 +380,7 @@ import express from "express";
 import cookieParser from "cookie-parser";
 
 // server/routes/index.ts
-import { Router as Router9 } from "express";
+import { Router as Router8 } from "express";
 
 // server/http.ts
 function handler(fn) {
@@ -427,11 +433,11 @@ async function requireAuth(req, res, next) {
   try {
     const token = req.cookies?.[COOKIE_NAME];
     const payload = token ? verifyToken(token) : null;
-    const user = payload ? await prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, email: true, role: true } }) : null;
+    const user = payload ? await prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, email: true, role: true, organizationId: true, dossierId: true } }) : null;
     if (!user) {
       return res.status(401).json({ error: "Authentification requise." });
     }
-    req.user = { sub: user.id, email: user.email, role: user.role };
+    req.user = { sub: user.id, email: user.email, role: user.role, organizationId: user.organizationId, dossierId: user.dossierId };
     next();
   } catch (e) {
     next(e);
@@ -442,11 +448,12 @@ function getAuthUser(req) {
 }
 
 // server/access.ts
-var NONE = { id: "__aucun__" };
+var NO_ACCESS = "Vous n'avez pas acc\xE8s \xE0 ce dossier.";
+var NONE = { organizationId: "__aucune__" };
 function dossierScopeWhere(req) {
   const user = getAuthUser(req);
-  if (!user) return NONE;
-  return { OR: [{ ownerId: user.sub }, { assignments: { some: { userId: user.sub } } }] };
+  if (!user?.organizationId) return NONE;
+  return user.dossierId ? { owner: { is: { id: user.sub } } } : { organizationId: user.organizationId };
 }
 function entryScopeWhere(req) {
   return { clientDossier: dossierScopeWhere(req) };
@@ -454,11 +461,9 @@ function entryScopeWhere(req) {
 function notificationScopeWhere(req) {
   return { dossier: dossierScopeWhere(req) };
 }
-async function ownsDossier(req, dossierId) {
+function isMainAccount(req) {
   const user = getAuthUser(req);
-  if (!user) return false;
-  const dossier = await prisma.clientDossier.findUnique({ where: { id: dossierId }, select: { ownerId: true } });
-  return dossier?.ownerId === user.sub;
+  return Boolean(user?.organizationId) && !user?.dossierId;
 }
 async function actorName(req) {
   const user = getAuthUser(req);
@@ -476,19 +481,20 @@ async function findAccessibleEntry(req, entryId) {
 }
 
 // server/routes/bootstrap.ts
-init_initialSettings();
 var ENTRY_INCLUDE = { auditTrail: true, debitAccount: true, creditAccount: true };
-var DOSSIER_INCLUDE = {
-  owner: { select: { name: true } },
-  assignments: { select: { user: { select: { id: true, name: true } } }, orderBy: { createdAt: "asc" } }
-};
+var DOSSIER_INCLUDE = { owner: { select: { name: true } } };
 async function buildBootstrapPayload(req) {
   const dossierScope = dossierScopeWhere(req);
-  const [dossierRows, entryRows, notificationRows, settingsRow, accountRows, invoiceRows] = await Promise.all([
+  const [dossierRows, directoryRows, entryRows, notificationRows, settingsRows, accountRows, invoiceRows] = await Promise.all([
     prisma.clientDossier.findMany({
-      where: dossierScopeWhere(req),
+      where: dossierScope,
       include: DOSSIER_INCLUDE,
-      orderBy: { createdAt: "asc" }
+      orderBy: [{ isMain: "desc" }, { createdAt: "asc" }]
+    }),
+    prisma.clientDossier.findMany({
+      where: { organizationId: getAuthUser(req)?.organizationId ?? "__aucune__" },
+      select: { id: true, name: true, isMain: true, owner: { select: { name: true } } },
+      orderBy: [{ isMain: "desc" }, { createdAt: "asc" }]
     }),
     prisma.journalEntry.findMany({
       where: entryScopeWhere(req),
@@ -499,7 +505,7 @@ async function buildBootstrapPayload(req) {
       where: notificationScopeWhere(req),
       orderBy: { timestamp: "desc" }
     }),
-    prisma.platformSettings.findFirst(),
+    prisma.platformSettings.findMany({ where: { dossier: dossierScope } }),
     // Comptes personnalisés des dossiers visibles (le plan standard est embarqué côté client).
     prisma.syscohadaAccount.findMany({ where: { dossierId: { not: null }, dossier: { is: dossierScope } }, orderBy: { code: "asc" } }),
     prisma.invoice.findMany({
@@ -510,9 +516,10 @@ async function buildBootstrapPayload(req) {
   ]);
   return {
     dossiers: dossierRows.map(serializeDossier),
+    directory: directoryRows.map((d) => ({ id: d.id, name: d.name, isMain: d.isMain, ownerName: d.owner?.name })),
     entries: entryRows.map(serializeEntry),
     notifications: notificationRows.map(serializeNotification),
-    settings: settingsRow ? serializePlatformSettings(settingsRow) : DEFAULT_PLATFORM_SETTINGS,
+    settingsByDossier: Object.fromEntries(settingsRows.map((r) => [r.dossierId, serializePlatformSettings(r)])),
     accounts: accountRows.map(serializeAccount),
     invoices: invoiceRows.map(serializeInvoice)
   };
@@ -809,12 +816,27 @@ function optionalReason(body) {
 }
 
 // server/routes/dossiers.ts
+init_seedData();
 var router = Router();
+var dossierData = (d) => ({
+  name: d.name,
+  managerName: d.managerName,
+  phone: d.phone,
+  activity: d.activity,
+  city: d.city,
+  country: d.country,
+  rccm: d.rccm,
+  ifu: d.ifu,
+  regimeFiscal: REGIME_FISCAL_TO_DB[d.regimeFiscal],
+  confidenceThreshold: d.confidenceThreshold,
+  currency: d.currency
+});
+var mainOnly = (res) => res.status(403).json({ error: "R\xE9serv\xE9 au compte principal de l'entreprise." });
 router.get("/dossiers", handler(async (req, res) => {
   const rows = await prisma.clientDossier.findMany({
     where: dossierScopeWhere(req),
     include: DOSSIER_INCLUDE,
-    orderBy: { createdAt: "asc" }
+    orderBy: [{ isMain: "desc" }, { createdAt: "asc" }]
   });
   res.json(rows.map(serializeDossier));
 }));
@@ -822,37 +844,57 @@ router.get("/dossiers/:id", handler(async (req, res) => {
   const id = identifier(req.params.id);
   if (!id) return res.status(400).json({ error: "Identifiant de dossier invalide." });
   const dossier = await findAccessibleDossier(req, id);
-  if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
+  if (!dossier) {
+    const sameOrg = await prisma.clientDossier.findFirst({ where: { id, organizationId: getAuthUser(req)?.organizationId ?? "" }, select: { id: true } });
+    return sameOrg ? res.status(403).json({ error: NO_ACCESS }) : res.status(404).json({ error: "Dossier introuvable." });
+  }
   const [full, entryRows] = await Promise.all([
     prisma.clientDossier.findUnique({ where: { id }, include: DOSSIER_INCLUDE }),
-    prisma.journalEntry.findMany({
-      where: { clientDossierId: id },
-      include: ENTRY_INCLUDE,
-      orderBy: { date: "desc" }
-    })
+    prisma.journalEntry.findMany({ where: { clientDossierId: id }, include: ENTRY_INCLUDE, orderBy: { date: "desc" } })
   ]);
   res.json({ dossier: serializeDossier(full), entries: entryRows });
 }));
-router.post("/dossiers", handler(async (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: "Authentification requise." });
+router.post("/company", handler(async (req, res) => {
+  if (!isMainAccount(req)) return mainOnly(res);
+  const organizationId = getAuthUser(req).organizationId;
+  if (await prisma.clientDossier.findFirst({ where: { organizationId, isMain: true } })) {
+    return res.status(409).json({ error: "Les informations de l'entreprise sont d\xE9j\xE0 enregistr\xE9es." });
+  }
   const d = unwrap(validateDossierInput(req.body));
-  const created = await prisma.clientDossier.create({
-    data: {
-      ownerId: user.sub,
-      name: d.name,
-      managerName: d.managerName,
-      phone: d.phone,
-      activity: d.activity,
-      city: d.city,
-      country: d.country,
-      rccm: d.rccm,
-      ifu: d.ifu,
-      regimeFiscal: REGIME_FISCAL_TO_DB[d.regimeFiscal],
-      confidenceThreshold: d.confidenceThreshold,
-      currency: d.currency
-    },
-    include: DOSSIER_INCLUDE
+  const created = await prisma.$transaction(async (tx) => {
+    const row = await tx.clientDossier.create({ data: { ...dossierData(d), organizationId, isMain: true } });
+    await createDefaultPlatformSettings(tx, row.id);
+    await tx.organization.update({ where: { id: organizationId }, data: { name: d.name } });
+    return tx.clientDossier.findUniqueOrThrow({ where: { id: row.id }, include: DOSSIER_INCLUDE });
+  });
+  res.status(201).json(serializeDossier(created));
+}));
+router.post("/dossiers", handler(async (req, res) => {
+  if (!isMainAccount(req)) return mainOnly(res);
+  const organizationId = getAuthUser(req).organizationId;
+  const { name, ownerName, email, password } = req.body ?? {};
+  const cleanName = typeof name === "string" ? name.trim().slice(0, 160) : "";
+  const cleanOwner = typeof ownerName === "string" ? ownerName.trim().slice(0, 120) : "";
+  const cleanEmail = typeof email === "string" ? email.trim() : "";
+  if (!cleanName) return res.status(400).json({ error: "Nom du dossier requis." });
+  if (!cleanOwner) return res.status(400).json({ error: "Nom du propri\xE9taire requis." });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return res.status(400).json({ error: "Email invalide." });
+  if (typeof password !== "string" || password.length < 8) {
+    return res.status(400).json({ error: "Le mot de passe doit contenir au moins 8 caract\xE8res." });
+  }
+  if (await prisma.user.findUnique({ where: { email: cleanEmail } })) {
+    return res.status(409).json({ error: "Un compte existe d\xE9j\xE0 avec cet email." });
+  }
+  const main = await prisma.clientDossier.findFirst({ where: { organizationId, isMain: true }, include: { settings: true } });
+  if (!main) return res.status(400).json({ error: "Renseignez d'abord les informations de l'entreprise." });
+  const passwordHash = await hashPassword(password);
+  const created = await prisma.$transaction(async (tx) => {
+    const { id: _id, isMain: _m, createdAt: _c, updatedAt: _u, settings, ...fiscal } = main;
+    const row = await tx.clientDossier.create({ data: { ...fiscal, name: cleanName, isMain: false } });
+    if (settings) await tx.platformSettings.create({ data: { ...copySettings(settings), dossierId: row.id } });
+    else await createDefaultPlatformSettings(tx, row.id);
+    await tx.user.create({ data: { email: cleanEmail, name: cleanOwner, passwordHash, role: "COMPTABLE", organizationId, dossierId: row.id } });
+    return tx.clientDossier.findUniqueOrThrow({ where: { id: row.id }, include: DOSSIER_INCLUDE });
   });
   res.status(201).json(serializeDossier(created));
 }));
@@ -862,23 +904,8 @@ router.post("/dossiers/:id/update", handler(async (req, res) => {
   const existing = await findAccessibleDossier(req, id);
   if (!existing) return res.status(404).json({ error: "Dossier introuvable." });
   const d = unwrap(validateDossierInput(req.body));
-  const updated = await prisma.clientDossier.update({
-    where: { id },
-    data: {
-      name: d.name,
-      managerName: d.managerName,
-      phone: d.phone,
-      activity: d.activity,
-      city: d.city,
-      country: d.country,
-      rccm: d.rccm,
-      ifu: d.ifu,
-      regimeFiscal: REGIME_FISCAL_TO_DB[d.regimeFiscal],
-      confidenceThreshold: d.confidenceThreshold,
-      currency: d.currency
-    },
-    include: DOSSIER_INCLUDE
-  });
+  const updated = await prisma.clientDossier.update({ where: { id }, data: dossierData(d), include: DOSSIER_INCLUDE });
+  if (existing.isMain) await prisma.organization.update({ where: { id: existing.organizationId }, data: { name: d.name } });
   res.json(serializeDossier(updated));
 }));
 router.post("/dossiers/:id/delete", handler(async (req, res) => {
@@ -886,49 +913,10 @@ router.post("/dossiers/:id/delete", handler(async (req, res) => {
   if (!id) return res.status(400).json({ error: "Identifiant de dossier invalide." });
   const existing = await findAccessibleDossier(req, id);
   if (!existing) return res.status(404).json({ error: "Dossier introuvable." });
-  if (!await ownsDossier(req, id)) return res.status(403).json({ error: "Seul le cr\xE9ateur du dossier peut le supprimer." });
+  if (!isMainAccount(req)) return mainOnly(res);
+  if (existing.isMain) return res.status(400).json({ error: "La comptabilit\xE9 de l'entreprise ne peut pas \xEAtre supprim\xE9e." });
   await prisma.clientDossier.delete({ where: { id } });
   res.status(204).end();
-}));
-async function assignmentGuard(req, res) {
-  const id = identifier(req.params.id);
-  const dossier = id ? await findAccessibleDossier(req, id) : null;
-  if (!dossier) {
-    res.status(404).json({ error: "Dossier introuvable." });
-    return null;
-  }
-  if (dossier.ownerId !== getAuthUser(req).sub) {
-    res.status(403).json({ error: "Seul le cr\xE9ateur du dossier peut g\xE9rer ses attributions." });
-    return null;
-  }
-  return dossier.id;
-}
-router.post("/dossiers/:id/assignments", handler(async (req, res) => {
-  const dossierId = await assignmentGuard(req, res);
-  if (!dossierId) return;
-  const me = getAuthUser(req).sub;
-  const targetId = identifier((req.body ?? {}).userId);
-  if (!targetId || targetId === me) return res.status(400).json({ error: "Comptable invalide." });
-  const [self, target] = await Promise.all([
-    prisma.user.findUnique({ where: { id: me }, select: { organizationId: true } }),
-    prisma.user.findUnique({ where: { id: targetId }, select: { organizationId: true } })
-  ]);
-  if (!target || target.organizationId !== self?.organizationId) {
-    return res.status(404).json({ error: "Comptable introuvable dans votre entreprise." });
-  }
-  await prisma.dossierAssignment.upsert({
-    where: { dossierId_userId: { dossierId, userId: targetId } },
-    create: { dossierId, userId: targetId },
-    update: {}
-  });
-  res.json(serializeDossier(await prisma.clientDossier.findUnique({ where: { id: dossierId }, include: DOSSIER_INCLUDE })));
-}));
-router.post("/dossiers/:id/assignments/:userId/delete", handler(async (req, res) => {
-  const dossierId = await assignmentGuard(req, res);
-  if (!dossierId) return;
-  const userId2 = identifier(req.params.userId);
-  if (userId2) await prisma.dossierAssignment.deleteMany({ where: { dossierId, userId: userId2 } });
-  res.json(serializeDossier(await prisma.clientDossier.findUnique({ where: { id: dossierId }, include: DOSSIER_INCLUDE })));
 }));
 var dossiers_default = router;
 
@@ -1232,45 +1220,29 @@ init_mappers();
 init_seedData();
 import { Router as Router4 } from "express";
 var router4 = Router4();
-router4.get("/settings", handler(async (_req, res) => {
-  const row = await prisma.platformSettings.findFirst() ?? await createDefaultPlatformSettings(prisma);
+router4.get("/settings", handler(async (req, res) => {
+  const dossierId = identifier(req.query.dossierId);
+  const dossier = dossierId ? await findAccessibleDossier(req, dossierId) : null;
+  if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
+  const row = await prisma.platformSettings.findUnique({ where: { dossierId: dossier.id } }) ?? await createDefaultPlatformSettings(prisma, dossier.id);
   res.json(serializePlatformSettings(row));
 }));
 router4.post("/settings/update", handler(async (req, res) => {
-  const s = unwrap(validateSettingsInput(req.body));
-  const data = {
-    syscohadaVersion: s.syscohadaVersion,
-    cashDeductibilityThreshold: s.cashDeductibilityThreshold,
-    defaultVatRate: s.defaultVatRate,
-    autoFlagLargeCashPayments: s.autoFlagLargeCashPayments,
-    defaultDebitCashAccount: s.defaultDebitCashAccount,
-    defaultCreditSalesAccount: s.defaultCreditSalesAccount,
-    defaultDebitExpenseAccount: s.defaultDebitExpenseAccount,
-    globalConfidenceThreshold: s.globalConfidenceThreshold,
-    autoValidateHighConfidence: s.autoValidateHighConfidence,
-    duplicateDetection: s.duplicateDetection,
-    aiModelPreference: AI_MODEL_TO_DB[s.aiModelPreference],
-    defaultStartupView: s.defaultStartupView,
-    numberFormatting: s.numberFormatting,
-    cabinetName: s.cabinetName,
-    expertLicenseNumber: s.expertLicenseNumber,
-    soundEnabled: s.soundEnabled,
-    soundType: s.soundType,
-    soundVolume: s.soundVolume,
-    notifyOnAnomaly: s.notifyOnAnomaly,
-    notifyOnTaxDeadline: s.notifyOnTaxDeadline,
-    notifyOnMobileMoneySync: s.notifyOnMobileMoneySync
-  };
-  const existing = await prisma.platformSettings.findFirst();
-  const saved = existing ? await prisma.platformSettings.update({ where: { id: existing.id }, data }) : await prisma.platformSettings.create({ data });
-  res.json(serializePlatformSettings(saved));
+  const dossierId = identifier((req.body ?? {}).dossierId);
+  const dossier = dossierId ? await findAccessibleDossier(req, dossierId) : null;
+  if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
+  const data = settingsData(unwrap(validateSettingsInput(req.body)));
+  const propagated = dossier.isMain && isMainAccount(req);
+  const targets = propagated ? (await prisma.clientDossier.findMany({ where: { organizationId: dossier.organizationId }, select: { id: true } })).map((d) => d.id) : [dossier.id];
+  await prisma.$transaction(targets.map((id) => prisma.platformSettings.upsert({ where: { dossierId: id }, update: data, create: { ...data, dossierId: id } })));
+  const saved = await prisma.platformSettings.findUniqueOrThrow({ where: { dossierId: dossier.id } });
+  res.json({ settings: serializePlatformSettings(saved), propagated });
 }));
 var settings_default = router4;
 
 // server/routes/backup.ts
 init_db();
 import { Router as Router5 } from "express";
-init_mappers();
 var router5 = Router5();
 router5.post("/import-backup", handler(async (req, res) => {
   const user = getAuthUser(req);
@@ -1284,33 +1256,18 @@ router5.post("/import-backup", handler(async (req, res) => {
   if (dossiers.length > 500 || entries.length > 2e4) {
     return res.status(400).json({ error: "Sauvegarde trop volumineuse (500 dossiers / 20000 \xE9critures maximum)." });
   }
-  await prisma.appNotification.deleteMany({ where: { dossier: { ownerId: user.sub } } });
-  await prisma.journalEntry.deleteMany({ where: { clientDossier: { ownerId: user.sub } } });
-  await prisma.clientDossier.deleteMany({ where: { ownerId: user.sub } });
   const restoredDossierIds = /* @__PURE__ */ new Set();
   for (const raw of dossiers) {
+    const id = identifier(raw?.id);
     const parsed = validateDossierInput(raw);
-    if (!parsed.ok) continue;
-    const d = parsed.data;
-    const id = identifier(raw?.id) ?? void 0;
-    const created = await prisma.clientDossier.create({
-      data: {
-        ...id ? { id } : {},
-        ownerId: user.sub,
-        name: d.name,
-        managerName: d.managerName,
-        phone: d.phone,
-        activity: d.activity,
-        city: d.city,
-        country: d.country,
-        rccm: d.rccm,
-        ifu: d.ifu,
-        regimeFiscal: REGIME_FISCAL_TO_DB[d.regimeFiscal],
-        confidenceThreshold: d.confidenceThreshold,
-        currency: d.currency
-      }
-    });
-    restoredDossierIds.add(created.id);
+    if (!id || !parsed.ok || !await findAccessibleDossier(req, id)) continue;
+    await prisma.appNotification.deleteMany({ where: { dossierId: id } });
+    await prisma.journalEntry.deleteMany({ where: { clientDossierId: id } });
+    await prisma.clientDossier.update({ where: { id }, data: dossierData(parsed.data) });
+    restoredDossierIds.add(id);
+  }
+  if (restoredDossierIds.size === 0) {
+    return res.status(400).json({ error: "Aucun dossier de cette sauvegarde ne correspond \xE0 vos dossiers." });
   }
   for (const raw of entries) {
     const dossierId = identifier(raw?.clientDossierId);
@@ -1350,38 +1307,6 @@ router5.post("/import-backup", handler(async (req, res) => {
         }
       }
     });
-  }
-  if (body.settings && user.role === "ADMIN") {
-    const parsed = validateSettingsInput(body.settings);
-    if (parsed.ok) {
-      const s = parsed.data;
-      const data = {
-        syscohadaVersion: s.syscohadaVersion,
-        cashDeductibilityThreshold: s.cashDeductibilityThreshold,
-        defaultVatRate: s.defaultVatRate,
-        autoFlagLargeCashPayments: s.autoFlagLargeCashPayments,
-        defaultDebitCashAccount: s.defaultDebitCashAccount,
-        defaultCreditSalesAccount: s.defaultCreditSalesAccount,
-        defaultDebitExpenseAccount: s.defaultDebitExpenseAccount,
-        globalConfidenceThreshold: s.globalConfidenceThreshold,
-        autoValidateHighConfidence: s.autoValidateHighConfidence,
-        duplicateDetection: s.duplicateDetection,
-        aiModelPreference: AI_MODEL_TO_DB[s.aiModelPreference],
-        defaultStartupView: s.defaultStartupView,
-        numberFormatting: s.numberFormatting,
-        cabinetName: s.cabinetName,
-        expertLicenseNumber: s.expertLicenseNumber,
-        soundEnabled: s.soundEnabled,
-        soundType: s.soundType,
-        soundVolume: s.soundVolume,
-        notifyOnAnomaly: s.notifyOnAnomaly,
-        notifyOnTaxDeadline: s.notifyOnTaxDeadline,
-        notifyOnMobileMoneySync: s.notifyOnMobileMoneySync
-      };
-      const existing = await prisma.platformSettings.findFirst();
-      if (existing) await prisma.platformSettings.update({ where: { id: existing.id }, data });
-      else await prisma.platformSettings.create({ data });
-    }
   }
   res.json(await buildBootstrapPayload(req));
 }));
@@ -1790,77 +1715,25 @@ router7.post("/invoice-payments/:id/delete", handler(async (req, res) => {
 }));
 var invoices_default = router7;
 
-// server/routes/team.ts
-init_db();
-import { Router as Router8 } from "express";
-var router8 = Router8();
-function serializeMember(u) {
-  return { id: u.id, name: u.name, email: u.email, role: u.role, createdById: u.createdById, createdAt: u.createdAt.toISOString() };
-}
-async function myOrganization(userId2) {
-  return prisma.user.findUniqueOrThrow({ where: { id: userId2 }, select: { organizationId: true, organization: { select: { name: true } } } });
-}
-router8.get("/team", handler(async (req, res) => {
-  const me = getAuthUser(req).sub;
-  const { organizationId, organization } = await myOrganization(me);
-  const members = await prisma.user.findMany({ where: { organizationId }, orderBy: { createdAt: "asc" } });
-  res.json({ organizationName: organization.name, members: members.map(serializeMember) });
-}));
-router8.post("/team", handler(async (req, res) => {
-  const me = getAuthUser(req).sub;
-  const { email, name, password } = req.body ?? {};
-  const cleanEmail = typeof email === "string" ? email.trim() : "";
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return res.status(400).json({ error: "Email invalide." });
-  if (typeof name !== "string" || !name.trim()) return res.status(400).json({ error: "Nom requis." });
-  if (typeof password !== "string" || password.length < 8) {
-    return res.status(400).json({ error: "Le mot de passe doit contenir au moins 8 caract\xE8res." });
-  }
-  if (await prisma.user.findUnique({ where: { email: cleanEmail } })) {
-    return res.status(409).json({ error: "Un compte existe d\xE9j\xE0 avec cet email." });
-  }
-  const { organizationId } = await myOrganization(me);
-  const user = await prisma.user.create({
-    data: { email: cleanEmail, name: name.trim(), passwordHash: await hashPassword(password), role: "COMPTABLE", organizationId, createdById: me }
-  });
-  res.status(201).json(serializeMember(user));
-}));
-router8.post("/team/:id/delete", handler(async (req, res) => {
-  const me = getAuthUser(req).sub;
-  const id = identifier(req.params.id);
-  const target = id ? await prisma.user.findUnique({ where: { id }, select: { id: true, createdById: true } }) : null;
-  if (!target || target.createdById !== me) {
-    return res.status(404).json({ error: "Comptable introuvable parmi ceux que vous avez cr\xE9\xE9s." });
-  }
-  await prisma.$transaction([
-    prisma.clientDossier.updateMany({ where: { ownerId: target.id }, data: { ownerId: me } }),
-    // Les dossiers récupérés sont désormais les siens : une attribution à soi-même n'a plus de sens.
-    prisma.dossierAssignment.deleteMany({ where: { userId: me, dossier: { ownerId: me } } }),
-    prisma.user.delete({ where: { id: target.id } })
-  ]);
-  res.status(204).end();
-}));
-var team_default = router8;
-
 // server/routes/index.ts
-var router9 = Router9();
-router9.get("/bootstrap", handler(async (req, res) => {
+var router8 = Router8();
+router8.get("/bootstrap", handler(async (req, res) => {
   res.json(await buildBootstrapPayload(req));
 }));
-router9.use(dossiers_default);
-router9.use(entries_default);
-router9.use(notifications_default);
-router9.use(settings_default);
-router9.use(backup_default);
-router9.use(accounts_default);
-router9.use(team_default);
-router9.use(invoices_default);
-var routes_default = router9;
+router8.use(dossiers_default);
+router8.use(entries_default);
+router8.use(notifications_default);
+router8.use(settings_default);
+router8.use(backup_default);
+router8.use(accounts_default);
+router8.use(invoices_default);
+var routes_default = router8;
 
 // server/agentRoutes.ts
 init_db();
 init_mappers();
 init_initialSettings();
-import { Router as Router10 } from "express";
+import { Router as Router9 } from "express";
 
 // src/utils/analytics.ts
 init_syscohadaPlan();
@@ -2388,7 +2261,7 @@ ${top}` : ""}`;
   }
   if (/anomalie|verifier|attente|valider|revue|probleme/.test(n)) {
     const r = ctx.review;
-    return `Il y a ${r.pending} \xE9criture(s) en attente de validation et ${r.anomalies} anomalie(s) \xE0 examiner, sur ${r.total} \xE9critures. Vous les trouvez dans l'onglet \xAB Journal & Validation \xBB du Mode Avanc\xE9.`;
+    return `Il y a ${r.pending} \xE9criture(s) en attente de validation et ${r.anomalies} anomalie(s) \xE0 examiner, sur ${r.total} \xE9critures. Vous les trouvez dans l'onglet \xAB Journal & Validation \xBB du Mode Comptable.`;
   }
   return `Voici la situation de ${dossier.name} : tr\xE9sorerie ${F(t.total)}, chiffre d'affaires du mois ${F(ctx.month.revenue)}, charges ${F(ctx.month.expenses)}, r\xE9sultat ${F(ctx.month.result)}. Les clients vous doivent ${F(ctx.receivables.total)} et vous devez ${F(ctx.payables.total)} \xE0 vos fournisseurs. ${ctx.review.pending + ctx.review.anomalies > 0 ? `${ctx.review.pending + ctx.review.anomalies} \xE9criture(s) attendent une v\xE9rification.` : "Toutes vos \xE9critures sont valid\xE9es."}
 Vous pouvez me demander : \xAB combien j'ai en caisse ? \xBB, \xAB qui me doit de l'argent ? \xBB, \xAB puis-je payer mon loyer ? \xBB, \xAB quel est mon score de cr\xE9dit ? \xBB.`;
@@ -3254,7 +3127,7 @@ async function analyzeWithGemini(input) {
 }
 
 // server/agentRoutes.ts
-var router10 = Router10();
+var router9 = Router9();
 var ENTRY_INCLUDE2 = { auditTrail: true, debitAccount: true, creditAccount: true };
 var INPUT_MODES2 = ["text", "voice", "photo", "mobile_money", "manual", "excel_import"];
 var ALLOWED_DOCUMENT_TYPES = /^(image\/(jpeg|png|webp|heic|heif)|application\/pdf)$/;
@@ -3276,7 +3149,7 @@ async function loadContext(req, dossierId) {
       orderBy: { date: "desc" },
       take: 2e3
     }),
-    prisma.platformSettings.findFirst(),
+    prisma.platformSettings.findUnique({ where: { dossierId } }),
     prisma.user.findUnique({ where: { id: user.sub }, select: { name: true } })
   ]);
   return {
@@ -3298,12 +3171,12 @@ function reviewNote(entries, threshold) {
   const pending = entries.filter((e) => e.status === "pending_review" && e.confidenceScore < threshold);
   const notes = [];
   if (anomalies.length) notes.push(`\u26A0\uFE0F ${anomalies[0].detectedAnomaly}`);
-  if (pending.length && !anomalies.length) notes.push(`Je ne suis pas s\xFBr \xE0 100 % (confiance ${pending[0].confidenceScore} %) : v\xE9rifiez-la dans le journal (Mode Avanc\xE9).`);
+  if (pending.length && !anomalies.length) notes.push(`Je ne suis pas s\xFBr \xE0 100 % (confiance ${pending[0].confidenceScore} %) : v\xE9rifiez-la dans le journal (Mode Comptable).`);
   return notes.length ? `
 
 ${notes.join("\n")}` : "";
 }
-router10.post("/chat", handler2(async (req, res) => {
+router9.post("/chat", handler2(async (req, res) => {
   const { dossierId, message = "", inputType = "text", pendingText, image } = req.body ?? {};
   if (typeof dossierId !== "string" || !String(message).trim() && !image) {
     return res.status(400).json({ error: "Dossier et message requis." });
@@ -3378,7 +3251,7 @@ router10.post("/chat", handler2(async (req, res) => {
   }
   return res.json({ success: true, intent: outcome.intent, reply: outcome.reply, entries: [], source });
 }));
-router10.post("/dossier-summary", handler2(async (req, res) => {
+router9.post("/dossier-summary", handler2(async (req, res) => {
   const ctx = await loadContext(req, String(req.body?.dossierId ?? ""));
   if (!ctx) return res.status(404).json({ error: "Dossier introuvable." });
   const a = buildAgentContext(ctx.entries, ctx.now);
@@ -3399,31 +3272,31 @@ router10.post("/dossier-summary", handler2(async (req, res) => {
     analytics: a
   });
 }));
-var agentRoutes_default = router10;
+var agentRoutes_default = router9;
 
 // server/authRoutes.ts
 init_db();
-import { Router as Router11 } from "express";
-var router11 = Router11();
+import { Router as Router10 } from "express";
+var router10 = Router10();
 function serializeUser(u) {
-  return { id: u.id, email: u.email, name: u.name, role: u.role };
+  return { id: u.id, email: u.email, name: u.name, role: u.role, dossierId: u.dossierId };
 }
-router11.post("/signup", async (req, res, next) => {
+router10.post("/signup", async (req, res, next) => {
   try {
     const { email, name, password } = req.body ?? {};
-    if (!email || !name || !password) {
-      return res.status(400).json({ error: "Email, nom et mot de passe requis." });
+    if (typeof email !== "string" || typeof name !== "string" || !email.trim() || !name.trim() || !password) {
+      return res.status(400).json({ error: "Nom de l'entreprise, email et mot de passe requis." });
     }
     if (typeof password !== "string" || password.length < 8) {
       return res.status(400).json({ error: "Le mot de passe doit contenir au moins 8 caract\xE8res." });
     }
-    const existing = await prisma.user.findUnique({ where: { email } });
+    const existing = await prisma.user.findUnique({ where: { email: email.trim() } });
     if (existing) {
       return res.status(409).json({ error: "Un compte existe d\xE9j\xE0 avec cet email." });
     }
     const passwordHash = await hashPassword(password);
     const user = await prisma.user.create({
-      data: { email, name, passwordHash, role: "COMPTABLE", organization: { create: { name } } }
+      data: { email: email.trim(), name: name.trim(), passwordHash, role: "COMPTABLE", organization: { create: { name: name.trim() } } }
     });
     const token = signToken({ sub: user.id, email: user.email, role: user.role });
     res.cookie(COOKIE_NAME, token, COOKIE_OPTIONS);
@@ -3432,7 +3305,7 @@ router11.post("/signup", async (req, res, next) => {
     next(e);
   }
 });
-router11.post("/login", async (req, res, next) => {
+router10.post("/login", async (req, res, next) => {
   try {
     const { email, password } = req.body ?? {};
     if (!email || !password) {
@@ -3449,11 +3322,11 @@ router11.post("/login", async (req, res, next) => {
     next(e);
   }
 });
-router11.post("/logout", (_req, res) => {
+router10.post("/logout", (_req, res) => {
   res.clearCookie(COOKIE_NAME, { ...COOKIE_OPTIONS, maxAge: void 0 });
   res.status(204).end();
 });
-router11.post("/change-password", requireAuth, async (req, res, next) => {
+router10.post("/change-password", requireAuth, async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = req.body ?? {};
     if (typeof newPassword !== "string" || newPassword.length < 8) {
@@ -3469,7 +3342,7 @@ router11.post("/change-password", requireAuth, async (req, res, next) => {
     next(e);
   }
 });
-router11.get("/me", async (req, res, next) => {
+router10.get("/me", async (req, res, next) => {
   try {
     const token = req.cookies?.[COOKIE_NAME];
     const payload = token ? verifyToken(token) : null;
@@ -3485,12 +3358,12 @@ router11.get("/me", async (req, res, next) => {
     next(e);
   }
 });
-var authRoutes_default = router11;
+var authRoutes_default = router10;
 
 // server/adminRoutes.ts
 init_db();
-import { Router as Router12 } from "express";
-var router12 = Router12();
+import { Router as Router11 } from "express";
+var router11 = Router11();
 var ROLES = ["ADMIN", "COMPTABLE"];
 function requireAdmin(req, res, next) {
   const user = req.user;
@@ -3507,8 +3380,8 @@ function validId(value) {
   if (typeof value !== "string") return null;
   return /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null;
 }
-router12.use(requireAdmin);
-router12.get("/users", async (_req, res, next) => {
+router11.use(requireAdmin);
+router11.get("/users", async (_req, res, next) => {
   try {
     const users = await prisma.user.findMany({ orderBy: { createdAt: "asc" }, include: WITH_ORG });
     res.json(users.map(serializeUser2));
@@ -3516,7 +3389,7 @@ router12.get("/users", async (_req, res, next) => {
     next(e);
   }
 });
-router12.post("/users", async (req, res, next) => {
+router11.post("/users", async (req, res, next) => {
   try {
     const { email, name, password, role } = req.body ?? {};
     if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -3542,7 +3415,7 @@ router12.post("/users", async (req, res, next) => {
     next(e);
   }
 });
-router12.post("/users/:id/role", async (req, res, next) => {
+router11.post("/users/:id/role", async (req, res, next) => {
   try {
     const id = validId(req.params.id);
     if (!id) return res.status(400).json({ error: "Identifiant utilisateur invalide." });
@@ -3560,7 +3433,7 @@ router12.post("/users/:id/role", async (req, res, next) => {
     next(e);
   }
 });
-router12.post("/users/:id/password", async (req, res, next) => {
+router11.post("/users/:id/password", async (req, res, next) => {
   try {
     const id = validId(req.params.id);
     if (!id) return res.status(400).json({ error: "Identifiant utilisateur invalide." });
@@ -3574,7 +3447,7 @@ router12.post("/users/:id/password", async (req, res, next) => {
     next(e);
   }
 });
-router12.post("/users/:id/delete", async (req, res, next) => {
+router11.post("/users/:id/delete", async (req, res, next) => {
   try {
     const id = validId(req.params.id);
     if (!id) return res.status(400).json({ error: "Identifiant utilisateur invalide." });
@@ -3582,13 +3455,16 @@ router12.post("/users/:id/delete", async (req, res, next) => {
     if (id === requester.sub) {
       return res.status(400).json({ error: "Vous ne pouvez pas supprimer votre propre compte." });
     }
-    await prisma.user.delete({ where: { id } });
+    const target = await prisma.user.findUnique({ where: { id }, select: { dossierId: true, organizationId: true } });
+    if (!target) return res.status(404).json({ error: "Utilisateur introuvable." });
+    if (target.dossierId) await prisma.user.delete({ where: { id } });
+    else await prisma.organization.delete({ where: { id: target.organizationId } });
     res.status(204).end();
   } catch (e) {
     next(e);
   }
 });
-var adminRoutes_default = router12;
+var adminRoutes_default = router11;
 
 // server/app.ts
 var app = express();
@@ -3657,18 +3533,11 @@ function ensureSeeded() {
   if (!seeded) {
     seeded = (async () => {
       const { prisma: prisma2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { ensureSyscohadaAccounts: ensureSyscohadaAccounts2, createDefaultPlatformSettings: createDefaultPlatformSettings2 } = await Promise.resolve().then(() => (init_seedData(), seedData_exports));
+      const { ensureSyscohadaAccounts: ensureSyscohadaAccounts2 } = await Promise.resolve().then(() => (init_seedData(), seedData_exports));
       try {
         await ensureSyscohadaAccounts2(prisma2);
       } catch (e) {
         console.error("[AxeCompta] Mise \xE0 jour du plan comptable impossible :", e?.message);
-      }
-      try {
-        if (await prisma2.platformSettings.count() === 0) {
-          await createDefaultPlatformSettings2(prisma2);
-        }
-      } catch (e) {
-        console.error("[AxeCompta] Initialisation des r\xE9glages impossible :", e?.message);
       }
     })();
   }

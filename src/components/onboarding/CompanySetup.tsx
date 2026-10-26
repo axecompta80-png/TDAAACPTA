@@ -2,16 +2,16 @@ import React, { useState } from 'react';
 import { Building2, LogOut, ArrowRight, Sparkles } from 'lucide-react';
 import { BrandLogo } from '../BrandLogo';
 import { CurrentUser } from '../../utils/authApi';
-import { ClientDossier } from '../../types';
+import { DossierInfo } from '../../types';
 import { OHADA_COUNTRIES, ACTIVITY_SECTORS, FISCAL_REGIMES, detectUserCountry, dossierCurrency } from '../../data/initialSettings';
 
-interface FirstDossierSetupProps {
+interface CompanySetupProps {
   currentUser: CurrentUser;
   onLogout: () => void;
-  onCreateDossier: (dossierData: Omit<ClientDossier, 'id' | 'ownerId' | 'ownerName'>) => Promise<unknown> | unknown;
+  onSubmit: (company: DossierInfo) => Promise<unknown> | unknown;
 }
 
-type DossierForm = Omit<ClientDossier, 'id' | 'ownerId' | 'ownerName'>;
+type DossierForm = DossierInfo;
 
 const countryDefaults = (c: typeof OHADA_COUNTRIES[number]) => ({
   country: c.name,
@@ -31,12 +31,12 @@ const EMPTY_FORM: Omit<DossierForm, 'country' | 'city' | 'phone' | 'currency'> =
 };
 
 /**
- * Écran d'accueil d'un compte sans aucun dossier.
- * Chaque utilisateur démarre vierge : il crée lui-même son premier dossier comptable,
- * qui lui sera rattaché (aucune donnée de démonstration n'est injectée).
+ * « Informations de l'entreprise », juste après l'inscription.
+ * Crée la comptabilité de l'entreprise elle-même : ce n'est pas un dossier, et aucun dossier
+ * n'est nécessaire pour commencer (aucune donnée de démonstration n'est injectée).
  */
-export const FirstDossierSetup: React.FC<FirstDossierSetupProps> = ({ currentUser, onLogout, onCreateDossier }) => {
-  const [form, setForm] = useState<DossierForm>(() => ({ ...EMPTY_FORM, ...countryDefaults(detectUserCountry()), managerName: currentUser.name }));
+export const CompanySetup: React.FC<CompanySetupProps> = ({ currentUser, onLogout, onSubmit }) => {
+  const [form, setForm] = useState<DossierForm>(() => ({ ...EMPTY_FORM, ...countryDefaults(detectUserCountry()), name: currentUser.name }));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -69,7 +69,7 @@ export const FirstDossierSetup: React.FC<FirstDossierSetupProps> = ({ currentUse
     if (!form.ifu.trim()) return setError("Indiquez le numéro d'IFU.");
     setSubmitting(true);
     try {
-      await onCreateDossier({ ...form });
+      await onSubmit({ ...form });
     } catch (err: any) {
       setError(err?.message || 'Création impossible pour le moment.');
     } finally {
@@ -112,10 +112,10 @@ export const FirstDossierSetup: React.FC<FirstDossierSetupProps> = ({ currentUse
               <Building2 className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="font-heading text-xl font-black text-[#1E084A]">Créez votre premier dossier comptable</h1>
+              <h1 className="font-heading text-xl font-black text-[#1E084A]">Informations de l'entreprise</h1>
               <p className="text-sm text-[#7C709A] mt-1">
-                Votre compte est vierge : aucun chiffre, aucune écriture. Renseignez votre activité pour commencer à
-                enregistrer vos ventes et vos achats. Ce dossier vous appartiendra et restera privé.
+                Renseignez votre entreprise pour commencer à enregistrer vos ventes et vos achats. Vous pourrez ensuite
+                ajouter des dossiers, chacun avec sa propre comptabilité, depuis le bouton « Ajouter un Dossier ».
               </p>
             </div>
           </div>
@@ -123,7 +123,7 @@ export const FirstDossierSetup: React.FC<FirstDossierSetupProps> = ({ currentUse
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="sm:col-span-2">
-                <label className={label}>Nom de l'entreprise / de l'activité *</label>
+                <label className={label}>Nom de l'entreprise *</label>
                 <input className={field} value={form.name} onChange={e => set({ name: e.target.value })} placeholder="ex : Quincaillerie Moderne SARL" />
               </div>
               <div>
@@ -193,7 +193,7 @@ export const FirstDossierSetup: React.FC<FirstDossierSetupProps> = ({ currentUse
               disabled={submitting}
               className="w-full bg-gradient-to-r from-[#7024E3] to-[#8B5CF6] text-white font-bold text-sm py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60 transition-opacity"
             >
-              <span>{submitting ? 'Création en cours…' : 'Créer mon dossier et commencer'}</span>
+              <span>{submitting ? 'Enregistrement…' : 'Enregistrer et commencer'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>

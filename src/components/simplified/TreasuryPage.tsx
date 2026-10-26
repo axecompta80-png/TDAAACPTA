@@ -20,6 +20,8 @@ import {
 interface TreasuryPageProps {
   entries: JournalEntry[];
   activeDossier: ClientDossier;
+  /** Niveau Entreprise : chiffres consolidés sur ces dossiers (entreprise comprise) et ventilés par dossier. */
+  consolidated?: ClientDossier[];
   onOpenCreditReady: () => void;
   onOpenNewInvoice: () => void;
 }
@@ -32,12 +34,14 @@ interface TreasuryPageProps {
 export const TreasuryPage: React.FC<TreasuryPageProps> = ({
   entries,
   activeDossier,
+  consolidated,
   onOpenCreditReady,
   onOpenNewInvoice
 }) => {
   const [activeViewTab, setActiveViewTab] = useState<'chart' | 'pockets'>('chart');
 
-  const dossierEntries = entries.filter(e => e.clientDossierId === activeDossier.id);
+  const scopeIds = new Set((consolidated ?? [activeDossier]).map(d => d.id));
+  const dossierEntries = entries.filter(e => scopeIds.has(e.clientDossierId));
 
   // Tous les chiffres viennent des écritures réelles : caisse 5711, banque 5211 (chèques et virements),
   // Orange Money 5261, MTN 5262, Wave 5263, Moov 5264.
@@ -111,10 +115,10 @@ export const TreasuryPage: React.FC<TreasuryPageProps> = ({
       {/* En-tête de page */}
       <div>
         <span className="text-[12px] uppercase tracking-widest font-bold text-[#7C709A] dark:text-[#A78BFA] font-mono">
-          {activeDossier.name}
+          {activeDossier.name}{consolidated && ' • Entreprise et tous ses dossiers'}
         </span>
         <h1 className="font-heading text-2xl font-black text-[#7024E3] mt-0.5">
-          Trésorerie & Statistiques
+          Trésorerie & Statistiques{consolidated && ' consolidées'}
         </h1>
       </div>
 
@@ -199,7 +203,7 @@ export const TreasuryPage: React.FC<TreasuryPageProps> = ({
 
             <div className="p-4">
               {activeViewTab === 'chart' ? (
-                <EvolutionChart entries={entries} activeDossier={activeDossier} />
+                <EvolutionChart entries={dossierEntries} />
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   {pockets.map(p => (
@@ -272,6 +276,44 @@ export const TreasuryPage: React.FC<TreasuryPageProps> = ({
           </div>
         </div>
       </div>
+
+      {consolidated && (
+        <div className="bg-white dark:bg-[#150A2A] border border-[#DDD6FE] dark:border-[#2D1A54] rounded-2xl shadow-2xs overflow-x-auto transition-colors">
+          <h4 className="px-5 pt-5 pb-3 text-xs font-bold uppercase tracking-wider text-[#1E084A] dark:text-[#F3EFFF] flex items-center gap-2">
+            <Layers className="w-4 h-4 text-[#7024E3] dark:text-[#A78BFA]" />
+            Détail par dossier
+          </h4>
+          <table className="w-full text-xs">
+            <thead className="text-left text-[11px] uppercase tracking-wider text-[#7C709A] dark:text-[#A594C9]">
+              <tr className="border-b border-[#EDE9FE] dark:border-[#2D1A54]">
+                <th className="px-5 py-2">Dossier</th>
+                <th className="px-5 py-2 text-right">Trésorerie</th>
+                <th className="px-5 py-2 text-right">Encaissé (mois)</th>
+                <th className="px-5 py-2 text-right">Décaissé (mois)</th>
+                <th className="px-5 py-2 text-right">Créances clients</th>
+              </tr>
+            </thead>
+            <tbody>
+              {consolidated.map(d => {
+                const own = dossierEntries.filter(e => e.clientDossierId === d.id);
+                const f = computeFlows(own, month.from, month.to);
+                return (
+                  <tr key={d.id} className="border-b last:border-0 border-[#F5F3FF] dark:border-[#231444] text-[#1E084A] dark:text-[#F3EFFF]">
+                    <td className="px-5 py-2.5">
+                      <div className="font-bold">{d.name}</div>
+                      <div className="text-[11px] text-[#7C709A] dark:text-[#A594C9]">{d.isMain ? 'Entreprise' : `Propriétaire : ${d.ownerName ?? '—'}`}</div>
+                    </td>
+                    <td className="px-5 py-2.5 text-right font-tabular font-bold">{computeTreasury(own).total.toLocaleString('fr-FR')}</td>
+                    <td className="px-5 py-2.5 text-right font-tabular text-[#059669] dark:text-[#34D399]">{f.cashIn.toLocaleString('fr-FR')}</td>
+                    <td className="px-5 py-2.5 text-right font-tabular text-[#DC2626] dark:text-[#F87171]">{f.cashOut.toLocaleString('fr-FR')}</td>
+                    <td className="px-5 py-2.5 text-right font-tabular">{computeReceivables(own).total.toLocaleString('fr-FR')}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 };

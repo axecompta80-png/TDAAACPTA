@@ -22,33 +22,42 @@ export async function ensureSyscohadaAccounts(prisma: PrismaClient) {
   }
 }
 
-/** Crée la ligne unique de réglages de la plateforme avec les valeurs par défaut. */
-export async function createDefaultPlatformSettings(prisma: PrismaClient) {
-  return prisma.platformSettings.create({
-    data: {
-      syscohadaVersion: DEFAULT_PLATFORM_SETTINGS.syscohadaVersion,
-      cashDeductibilityThreshold: DEFAULT_PLATFORM_SETTINGS.cashDeductibilityThreshold,
-      defaultVatRate: DEFAULT_PLATFORM_SETTINGS.defaultVatRate,
-      autoFlagLargeCashPayments: DEFAULT_PLATFORM_SETTINGS.autoFlagLargeCashPayments,
-      defaultDebitCashAccount: DEFAULT_PLATFORM_SETTINGS.defaultDebitCashAccount,
-      defaultCreditSalesAccount: DEFAULT_PLATFORM_SETTINGS.defaultCreditSalesAccount,
-      defaultDebitExpenseAccount: DEFAULT_PLATFORM_SETTINGS.defaultDebitExpenseAccount,
-      globalConfidenceThreshold: DEFAULT_PLATFORM_SETTINGS.globalConfidenceThreshold,
-      autoValidateHighConfidence: DEFAULT_PLATFORM_SETTINGS.autoValidateHighConfidence,
-      duplicateDetection: DEFAULT_PLATFORM_SETTINGS.duplicateDetection,
-      aiModelPreference: AI_MODEL_TO_DB[DEFAULT_PLATFORM_SETTINGS.aiModelPreference] as any,
-      defaultStartupView: DEFAULT_PLATFORM_SETTINGS.defaultStartupView as any,
-      numberFormatting: DEFAULT_PLATFORM_SETTINGS.numberFormatting as any,
-      cabinetName: DEFAULT_PLATFORM_SETTINGS.cabinetName,
-      expertLicenseNumber: DEFAULT_PLATFORM_SETTINGS.expertLicenseNumber,
-      soundEnabled: DEFAULT_PLATFORM_SETTINGS.soundEnabled,
-      soundType: DEFAULT_PLATFORM_SETTINGS.soundType as any,
-      soundVolume: DEFAULT_PLATFORM_SETTINGS.soundVolume,
-      notifyOnAnomaly: DEFAULT_PLATFORM_SETTINGS.notifyOnAnomaly,
-      notifyOnTaxDeadline: DEFAULT_PLATFORM_SETTINGS.notifyOnTaxDeadline,
-      notifyOnMobileMoneySync: DEFAULT_PLATFORM_SETTINGS.notifyOnMobileMoneySync,
-    },
-  });
+/** Champs de réglages tels que stockés, à partir de réglages au format client (valeurs par défaut ou saisie validée). */
+export function settingsData(s: any) {
+  return {
+    syscohadaVersion: s.syscohadaVersion,
+    cashDeductibilityThreshold: s.cashDeductibilityThreshold,
+    defaultVatRate: s.defaultVatRate,
+    autoFlagLargeCashPayments: s.autoFlagLargeCashPayments,
+    defaultDebitCashAccount: s.defaultDebitCashAccount,
+    defaultCreditSalesAccount: s.defaultCreditSalesAccount,
+    defaultDebitExpenseAccount: s.defaultDebitExpenseAccount,
+    globalConfidenceThreshold: s.globalConfidenceThreshold,
+    autoValidateHighConfidence: s.autoValidateHighConfidence,
+    duplicateDetection: s.duplicateDetection,
+    aiModelPreference: AI_MODEL_TO_DB[s.aiModelPreference] as any,
+    defaultStartupView: s.defaultStartupView as any,
+    numberFormatting: s.numberFormatting as any,
+    cabinetName: s.cabinetName,
+    expertLicenseNumber: s.expertLicenseNumber,
+    soundEnabled: s.soundEnabled,
+    soundType: s.soundType as any,
+    soundVolume: s.soundVolume,
+    notifyOnAnomaly: s.notifyOnAnomaly,
+    notifyOnTaxDeadline: s.notifyOnTaxDeadline,
+    notifyOnMobileMoneySync: s.notifyOnMobileMoneySync,
+  };
+}
+
+/** Copie d'une ligne de réglages existante (sans son identité). */
+export function copySettings(row: { id: string; dossierId: string; updatedAt: Date } & Record<string, unknown>) {
+  const { id: _id, dossierId: _d, updatedAt: _u, ...rest } = row;
+  return rest as any;
+}
+
+/** Crée les réglages par défaut d'un dossier. */
+export async function createDefaultPlatformSettings(prisma: PrismaClient, dossierId: string) {
+  return prisma.platformSettings.create({ data: { ...settingsData(DEFAULT_PLATFORM_SETTINGS), dossierId } });
 }
 
 /**

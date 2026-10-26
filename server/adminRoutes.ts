@@ -102,7 +102,10 @@ router.post('/users/:id/password', async (req, res, next) => {
   }
 });
 
-/** Suppression d'un compte : POST /users/:id/delete (cascade sur ses dossiers et écritures). */
+/**
+ * Suppression d'un compte : POST /users/:id/delete.
+ * Compte principal : toute son entreprise (dossiers, écritures, propriétaires). Propriétaire : son seul compte.
+ */
 router.post('/users/:id/delete', async (req, res, next) => {
   try {
     const id = validId(req.params.id);
@@ -111,7 +114,10 @@ router.post('/users/:id/delete', async (req, res, next) => {
     if (id === requester.sub) {
       return res.status(400).json({ error: 'Vous ne pouvez pas supprimer votre propre compte.' });
     }
-    await prisma.user.delete({ where: { id } });
+    const target = await prisma.user.findUnique({ where: { id }, select: { dossierId: true, organizationId: true } });
+    if (!target) return res.status(404).json({ error: 'Utilisateur introuvable.' });
+    if (target.dossierId) await prisma.user.delete({ where: { id } });
+    else await prisma.organization.delete({ where: { id: target.organizationId } });
     res.status(204).end();
   } catch (e) {
     next(e);

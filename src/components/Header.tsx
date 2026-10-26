@@ -1,6 +1,6 @@
 import React from 'react';
 import { BrandLogo } from './BrandLogo';
-import { ClientDossier } from '../types';
+import { ClientDossier, DossierDirectoryItem } from '../types';
 import { CurrentUser } from '../utils/authApi';
 import {
   Building2,
@@ -12,15 +12,20 @@ import {
   Settings,
   LogOut,
   Wallet,
-  ShieldCheck
+  ShieldCheck,
+  FolderPlus
 } from 'lucide-react';
 
 interface HeaderProps {
   currentMode: 'simplified' | 'expert';
   onModeChange: (mode: 'simplified' | 'expert') => void;
-  dossiers: ClientDossier[];
+  /** Entreprise et dossiers (nom et propriétaire), y compris ceux hors périmètre. */
+  directory: DossierDirectoryItem[];
   activeDossier: ClientDossier;
-  onSelectDossier: (dossier: ClientDossier) => void;
+  /** L'appelant vérifie l'accès (message si le dossier n'est pas accessible). */
+  onSelectDossier: (dossierId: string) => void;
+  /** Compte principal uniquement : ouvre « Ajouter un Dossier ». */
+  onAddDossier?: () => void;
   pendingValidationCount: number;
   anomalyCount: number;
   onOpenExcelImport?: () => void;
@@ -40,17 +45,16 @@ function getInitials(name: string) {
   return (first + last).toUpperCase();
 }
 
-const roleLabel: Record<CurrentUser['role'], string> = {
-  ADMIN: 'Administrateur',
-  COMPTABLE: 'Comptable',
-};
+const roleLabel = (u: CurrentUser) =>
+  u.dossierId ? 'Propriétaire de dossier' : u.role === 'ADMIN' ? 'Administrateur' : 'Compte principal';
 
 export const Header: React.FC<HeaderProps> = ({
   currentMode,
   onModeChange,
-  dossiers,
+  directory,
   activeDossier,
   onSelectDossier,
+  onAddDossier,
   pendingValidationCount,
   anomalyCount,
   onOpenExcelImport,
@@ -94,7 +98,7 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <div className="flex flex-col leading-tight">
                 <span className="text-[10px] uppercase tracking-wider text-[#7C709A] dark:text-[#A78BFA] font-bold">
-                  Dossier
+                  {activeDossier.isMain ? 'Entreprise' : 'Dossier'}
                 </span>
                 <span className="text-xs font-bold text-[#1E084A] dark:text-[#F3EFFF] truncate max-w-[160px] sm:max-w-[220px]">
                   {activeDossier.name}
@@ -107,36 +111,30 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="absolute left-0 mt-1.5 w-80 bg-white dark:bg-[#180D33] border border-[#DDD6FE] dark:border-[#35225E] shadow-xl z-50 rounded-xl py-1 overflow-hidden">
                 <div className="px-3.5 py-2 border-b border-[#EDE9FE] dark:border-[#2D1A54] bg-[#F8F7FD] dark:bg-[#140A28]">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-[#7024E3] dark:text-[#C4B5FD]">
-                    Mes dossiers
+                    Entreprise & dossiers
                   </span>
                 </div>
-                {dossiers.map(d => {
+                {directory.map(d => {
                   const isSelected = d.id === activeDossier.id;
                   return (
                     <button
                       key={d.id}
                       onClick={() => {
-                        onSelectDossier(d);
+                        onSelectDossier(d.id);
                         setDossierMenuOpen(false);
                       }}
                       className={`w-full text-left px-3.5 py-2.5 text-xs flex flex-col border-b border-[#F5F3FF] dark:border-[#231444] hover:bg-[#F5F3FF] dark:hover:bg-[#231444] transition-colors ${
                         isSelected ? 'bg-[#EDE9FE]/50 dark:bg-[#2D1855] font-semibold' : ''
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-[#1E084A] dark:text-[#F3EFFF] flex items-center gap-1.5">
-                          {isSelected && <Check className="w-3.5 h-3.5 text-[#7024E3] dark:text-[#A78BFA]" />}
-                          {d.name}
-                        </span>
-                        <span className="text-[11px] text-[#7024E3] dark:text-[#A78BFA] font-mono font-bold bg-[#EDE9FE] dark:bg-[#2A164F] px-1.5 py-0.5 rounded">
-                          {d.country}
-                        </span>
-                      </div>
-                      <span className="text-[12px] text-[#534674] dark:text-[#A594C9] truncate mt-0.5">{d.activity}</span>
-                      <span className="text-[10px] text-[#7C709A] dark:text-[#8E7BB8] font-mono mt-0.5">RCCM: {d.rccm}</span>
-                      {d.ownerName && currentUser && d.ownerId !== currentUser.id && (
-                        <span className="text-[10px] text-[#7024E3] dark:text-[#C4B5FD] font-bold mt-0.5">Attribué par {d.ownerName}</span>
-                      )}
+                      <span className="font-bold text-[#1E084A] dark:text-[#F3EFFF] flex items-center gap-1.5">
+                        {isSelected && <Check className="w-3.5 h-3.5 text-[#7024E3] dark:text-[#A78BFA]" />}
+                        {d.isMain && <Building2 className="w-3.5 h-3.5 text-[#7024E3] dark:text-[#A78BFA]" />}
+                        {d.name}
+                      </span>
+                      <span className="text-[11px] text-[#7C709A] dark:text-[#A594C9] mt-0.5">
+                        {d.isMain ? 'Entreprise' : `Propriétaire : ${d.ownerName ?? '—'}`}
+                      </span>
                     </button>
                   );
                 })}
@@ -157,8 +155,8 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <Store className="w-4 h-4 shrink-0" />
-              <span className="hidden sm:inline">Mode Simple</span>
-              <span className="sm:hidden">Simple</span>
+              <span className="hidden sm:inline">Mode Entrepreneur</span>
+              <span className="sm:hidden">Entrepreneur</span>
             </button>
 
             <button
@@ -170,8 +168,8 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <Building2 className="w-4 h-4 shrink-0" />
-              <span className="hidden sm:inline">Mode Avancé</span>
-              <span className="sm:hidden">Avancé</span>
+              <span className="hidden sm:inline">Mode Comptable</span>
+              <span className="sm:hidden">Comptable</span>
               {(pendingValidationCount > 0 || anomalyCount > 0) && (
                 <span className="ml-0.5 px-1.5 py-0.5 text-[11px] font-mono font-bold bg-[#F59E0B] text-white rounded-full shadow-xs">
                   {pendingValidationCount + anomalyCount}
@@ -183,6 +181,17 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Zone 3 — Actions & compte */}
         <div className="flex items-center gap-2 shrink-0 ml-auto">
+          {onAddDossier && (
+            <button
+              onClick={onAddDossier}
+              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold transition-all shadow-2xs border border-[#DDD6FE] dark:border-[#35225E] bg-[#F5F3FF] dark:bg-[#1C0F38] text-[#7024E3] dark:text-[#C4B5FD] hover:bg-[#EDE9FE] dark:hover:bg-[#2A174E]"
+              title="Ajouter un Dossier"
+            >
+              <FolderPlus className="w-4 h-4 shrink-0" />
+              <span className="hidden md:inline">Ajouter un Dossier</span>
+            </button>
+          )}
+
           {onOpenTreasuryPage && (
             <button
               onClick={onOpenTreasuryPage}
@@ -247,7 +256,7 @@ export const Header: React.FC<HeaderProps> = ({
                       {currentUser.email}
                     </span>
                     <span className="inline-block mt-1.5 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-[#EDE9FE] dark:bg-[#2A164F] text-[#7024E3] dark:text-[#C4B5FD] rounded">
-                      {roleLabel[currentUser.role]}
+                      {roleLabel(currentUser)}
                     </span>
                   </div>
 
@@ -267,7 +276,7 @@ export const Header: React.FC<HeaderProps> = ({
                       className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-bold text-[#534674] dark:text-[#C4B5FD] hover:bg-[#F5F3FF] dark:hover:bg-[#231444] hover:text-[#1E084A] dark:hover:text-white transition-colors"
                     >
                       <Settings className="w-4 h-4" />
-                      <span>Paramètres de la plateforme</span>
+                      <span>Paramètres</span>
                     </button>
                   )}
 

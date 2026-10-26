@@ -25,7 +25,7 @@ function handler(fn: (req: Request, res: Response) => Promise<any>) {
 
 /**
  * Charge le contexte d'un dossier pour l'agent, en vérifiant au préalable que
- * l'utilisateur en session y a accès (dossier créé ou attribué).
+ * l'utilisateur en session y a accès.
  * Retourne null si le dossier est inexistant ou hors périmètre (réponse 404).
  */
 async function loadContext(req: Request, dossierId: string): Promise<AgentRequestContext | null> {
@@ -45,7 +45,7 @@ async function loadContext(req: Request, dossierId: string): Promise<AgentReques
       orderBy: { date: 'desc' },
       take: 2000,
     }),
-    prisma.platformSettings.findFirst(),
+    prisma.platformSettings.findUnique({ where: { dossierId } }),
     prisma.user.findUnique({ where: { id: user.sub }, select: { name: true } }),
   ]);
 
@@ -70,7 +70,7 @@ function reviewNote(entries: JournalEntry[], threshold: number): string {
   const pending = entries.filter(e => e.status === 'pending_review' && e.confidenceScore < threshold);
   const notes: string[] = [];
   if (anomalies.length) notes.push(`⚠️ ${anomalies[0].detectedAnomaly}`);
-  if (pending.length && !anomalies.length) notes.push(`Je ne suis pas sûr à 100 % (confiance ${pending[0].confidenceScore} %) : vérifiez-la dans le journal (Mode Avancé).`);
+  if (pending.length && !anomalies.length) notes.push(`Je ne suis pas sûr à 100 % (confiance ${pending[0].confidenceScore} %) : vérifiez-la dans le journal (Mode Comptable).`);
   return notes.length ? `\n\n${notes.join('\n')}` : '';
 }
 

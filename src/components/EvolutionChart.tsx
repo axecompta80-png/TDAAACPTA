@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { JournalEntry, ClientDossier } from '../types';
+import { JournalEntry } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import { computeFlows, computeTreasury, isoDate } from '../utils/analytics';
 import { 
@@ -15,8 +15,8 @@ import {
 } from 'lucide-react';
 
 interface EvolutionChartProps {
+  /** Écritures déjà restreintes au périmètre affiché (un dossier, ou l'entreprise consolidée). */
   entries: JournalEntry[];
-  activeDossier: ClientDossier;
   compact?: boolean;
 }
 
@@ -33,19 +33,13 @@ interface DataPoint {
 }
 
 export const EvolutionChart: React.FC<EvolutionChartProps> = ({
-  entries,
-  activeDossier,
+  entries: dossierEntries,
   compact = false
 }) => {
   const { isDark } = useTheme();
   const [period, setPeriod] = useState<Period>('30d');
   const [metricView, setMetricView] = useState<MetricView>('cashflow');
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-
-  // Filter entries for the current dossier
-  const dossierEntries = useMemo(() => {
-    return entries.filter(e => e.clientDossierId === activeDossier.id);
-  }, [entries, activeDossier.id]);
 
   // Trajectoire réelle : chaque point agrège les écritures de sa période ; le solde cumulé part du
   // solde réel de trésorerie à l'ouverture de la première période (aucune donnée simulée).

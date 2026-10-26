@@ -17,8 +17,6 @@ interface MultiClientPortfolioProps {
   entries: JournalEntry[];
   onSelectDossier: (dossier: ClientDossier) => void;
   onUpdateConfidenceThreshold: (dossierId: string, newThreshold: number) => void;
-  /** Vue administrateur : regroupement du portefeuille par utilisateur propriétaire. */
-  groupByOwner?: boolean;
 }
 
 interface DossierStat {
@@ -36,15 +34,14 @@ export const MultiClientPortfolio: React.FC<MultiClientPortfolioProps> = ({
   activeDossier,
   entries,
   onSelectDossier,
-  onUpdateConfidenceThreshold,
-  groupByOwner = false
+  onUpdateConfidenceThreshold
 }) => {
   const [filterCountry, setFilterCountry] = useState<string>('all');
   const [editingThresholdDossierId, setEditingThresholdDossierId] = useState<string | null>(null);
 
   const countries = Array.from(new Set(dossiers.map(d => d.country)));
 
-  // Un dossier appartient toujours à un propriétaire : le libellé est utilisé pour le regroupement cabinet.
+  // Propriétaire affiché : « Entreprise » pour la comptabilité de l'entreprise elle-même.
   const dossierStats: DossierStat[] = dossiers.map(dossier => {
     const dEntries = entries.filter(e => e.clientDossierId === dossier.id);
     const pending = dEntries.filter(e => e.status === 'pending_review').length;
@@ -55,7 +52,7 @@ export const MultiClientPortfolio: React.FC<MultiClientPortfolioProps> = ({
       .reduce((sum, e) => sum + e.amount, 0);
     return {
       dossier,
-      owner: (dossier.ownerName && dossier.ownerName.trim()) || 'Sans propriétaire',
+      owner: dossier.isMain ? 'Entreprise' : (dossier.ownerName?.trim() || 'Sans propriétaire'),
       pending,
       anomalies,
       validated,
@@ -71,21 +68,9 @@ export const MultiClientPortfolio: React.FC<MultiClientPortfolioProps> = ({
     : dossierStats.filter(s => s.dossier.country === filterCountry)
   ).slice().sort((a, b) => priorityOf(b) - priorityOf(a));
 
-  // Regroupement par propriétaire (vue administrateur) ou liste plate (vue comptable).
-  const groupedByOwner = (() => {
-    if (!groupByOwner) return null;
-    const map = new Map<string, DossierStat[]>();
-    for (const s of filteredStats) {
-      if (!map.has(s.owner)) map.set(s.owner, []);
-      map.get(s.owner)!.push(s);
-    }
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  })();
-
   const totalPendingAll = dossierStats.reduce((sum, s) => sum + s.pending, 0);
   const totalAnomaliesAll = dossierStats.reduce((sum, s) => sum + s.anomalies, 0);
   const totalValidatedAll = dossierStats.reduce((sum, s) => sum + s.validated, 0);
-  const ownersCount = new Set(dossierStats.map(s => s.owner)).size;
 
   const renderRow = (s: DossierStat) => {
     const { dossier, pending, anomalies, totalTurnover, owner } = s;
@@ -105,14 +90,12 @@ export const MultiClientPortfolio: React.FC<MultiClientPortfolioProps> = ({
           </div>
           <div className="text-[11px] text-[#7C709A] font-mono mt-0.5">RCCM : {dossier.rccm}</div>
         </td>
-        {groupByOwner && (
-          <td className="p-3.5">
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#7024E3]">
-              <Users className="w-3 h-3" />
-              {owner}
-            </span>
-          </td>
-        )}
+        <td className="p-3.5">
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#7024E3]">
+            <Users className="w-3 h-3" />
+            {owner}
+          </span>
+        </td>
         <td className="p-3.5 max-w-[200px]">
           <div className="text-[#1E084A] truncate">{dossier.activity}</div>
           <div className="text-[11px] text-[#7C709A] font-mono">{dossier.city}, {dossier.country}</div>
@@ -184,7 +167,7 @@ export const MultiClientPortfolio: React.FC<MultiClientPortfolioProps> = ({
     );
   };
 
-  const columnCount = groupByOwner ? 9 : 8;
+  const columnCount = 9;
 
   return (
     <div className="space-y-5">
@@ -193,24 +176,16 @@ export const MultiClientPortfolio: React.FC<MultiClientPortfolioProps> = ({
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
             <span className="text-[11px] font-mono uppercase tracking-widest text-[#A78BFA] font-bold block">
-              {groupByOwner ? 'Espace Supervision Administrateur • Tous les dossiers' : 'Mes entreprises • Vos dossiers'}
+              L'entreprise et ses dossiers
             </span>
             <h2 className="font-heading text-2xl font-black text-white mt-1">
-              Portefeuille Multi-Clients OHADA
+              Portefeuille Multi-Dossiers
             </h2>
             <p className="text-xs text-[#C4B5FD] mt-1">
-              {groupByOwner
-                ? 'Supervisez les dossiers de tous les utilisateurs, classés par propriétaire.'
-                : 'Supervisez les écritures pré-catégorisées par l\'agent IA et validez les flux incertains.'}
+              Chaque dossier a sa propre comptabilité : ouvrez-en un pour voir ses chiffres et le traiter.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5">
-            {groupByOwner && (
-              <div className="px-3.5 py-2 bg-[#2A0E68] border border-[#3B1578] rounded-xl text-center">
-                <span className="text-[11px] text-[#C4B5FD] uppercase block font-medium">Propriétaires</span>
-                <span className="text-lg font-black font-tabular text-white">{ownersCount}</span>
-              </div>
-            )}
             <div className="px-3.5 py-2 bg-[#2A0E68] border border-[#3B1578] rounded-xl text-center">
               <span className="text-[11px] text-[#C4B5FD] uppercase block font-medium">Dossiers</span>
               <span className="text-lg font-black font-tabular text-white">{dossiers.length}</span>
@@ -261,7 +236,7 @@ export const MultiClientPortfolio: React.FC<MultiClientPortfolioProps> = ({
             <thead>
               <tr className="bg-[#1E084A] text-white border-b border-[#3B1578] uppercase font-mono text-[11px]">
                 <th className="p-3.5">Entreprise / RCCM</th>
-                {groupByOwner && <th className="p-3.5">Propriétaire</th>}
+                <th className="p-3.5">Propriétaire</th>
                 <th className="p-3.5">Activité & Ville</th>
                 <th className="p-3.5">Régime Fiscal</th>
                 <th className="p-3.5 text-right">CA Période (FCFA)</th>
@@ -275,26 +250,11 @@ export const MultiClientPortfolio: React.FC<MultiClientPortfolioProps> = ({
               {filteredStats.length === 0 && (
                 <tr>
                   <td colSpan={columnCount} className="p-6 text-center text-[#7C709A]">
-                    Aucun dossier à afficher. Créez votre premier dossier depuis les paramètres.
+                    Aucun dossier à afficher. Créez-en un avec « Ajouter un Dossier ».
                   </td>
                 </tr>
               )}
-              {groupedByOwner
-                ? groupedByOwner.map(([owner, list]) => (
-                    <React.Fragment key={owner}>
-                      <tr className="bg-[#F5F3FF]">
-                        <td colSpan={columnCount} className="p-2.5 px-3.5">
-                          <span className="inline-flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-[#7024E3]">
-                            <Users className="w-3.5 h-3.5" />
-                            Propriétaire : {owner}
-                            <span className="px-1.5 py-0.5 bg-white border border-[#DDD6FE] rounded font-mono text-[10px]">{list.length}</span>
-                          </span>
-                        </td>
-                      </tr>
-                      {list.map(renderRow)}
-                    </React.Fragment>
-                  ))
-                : filteredStats.map(renderRow)}
+              {filteredStats.map(renderRow)}
             </tbody>
           </table>
         </div>

@@ -129,12 +129,10 @@ export interface InvoiceInput {
 
 export interface ClientDossier {
   id: string;
-  /** Identifiant du créateur du dossier (seul à pouvoir le supprimer et gérer ses attributions). */
-  ownerId: string;
-  /** Nom du créateur, renseigné côté serveur. */
+  /** Comptabilité de l'entreprise elle-même (une par entreprise) ; sinon un dossier confié à un propriétaire. */
+  isMain: boolean;
+  /** Nom du propriétaire du dossier, renseigné côté serveur (absent pour l'entreprise). */
   ownerName?: string;
-  /** Comptables à qui le créateur a attribué ce dossier. */
-  assignees?: { id: string; name: string }[];
   name: string;
   managerName: string;
   phone: string;
@@ -147,6 +145,17 @@ export interface ClientDossier {
   confidenceThreshold: number; // default 85
   currency: string;
 }
+
+/** Entrée du sélecteur Entreprise / Dossiers (y compris les dossiers hors périmètre). */
+export interface DossierDirectoryItem {
+  id: string;
+  name: string;
+  isMain: boolean;
+  ownerName?: string;
+}
+
+/** Champs saisis pour les informations d'une entreprise ou d'un dossier. */
+export type DossierInfo = Omit<ClientDossier, 'id' | 'isMain' | 'ownerName'>;
 
 export interface ChatMessage {
   id: string;
