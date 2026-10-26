@@ -109,7 +109,8 @@ router.post('/entries/import', handler(async (req, res) => {
   if (list.length > 5000) return res.status(400).json({ error: 'Import limité à 5000 écritures par opération.' });
 
   const author = await actorName(req);
-  const created = [];
+  // Tout est vérifié avant d'écrire : une ligne refusée n'enregistre aucune ligne (pas d'import à moitié).
+  const rows = [];
   for (const raw of list) {
     const dossierId = identifier((raw as any)?.clientDossierId);
     if (!dossierId) return res.status(400).json({ error: 'Une écriture importée référence un dossier invalide.' });
@@ -121,10 +122,10 @@ router.post('/entries/import', handler(async (req, res) => {
     const accountError = await assertAccountsUsable([e.debitAccountCode, e.creditAccountCode], dossierId);
     if (accountError) return res.status(400).json({ error: accountError });
 
-    const row = await prisma.journalEntry.create({ data: entryCreateData(e, dossier, userId(req), author), include: ENTRY_INCLUDE });
-    created.push(serializeEntry(row));
+    rows.push(entryCreateData(e, dossier, userId(req), author));
   }
-  res.status(201).json(created);
+  const created = await prisma.$transaction(rows.map(data => prisma.journalEntry.create({ data, include: ENTRY_INCLUDE })));
+  res.status(201).json(created.map(serializeEntry));
 }));
 
 /**

@@ -58,9 +58,9 @@ export function detectColumns(headers: string[]): ColumnMapping {
       debitAccountCol = h;
     } else if (!creditAccountCol && (n.includes('compte c') || n.includes('credit compte') || n.includes('code c') || n === 'compte credit' || n === 'cpt credit' || n === 'compte_credit')) {
       creditAccountCol = h;
-    } else if (!debitCol && (n === 'debit' || n === 'depense' || n === 'retrait' || n.includes('montant debit') || n.includes('debits'))) {
+    } else if (!debitCol && (n.startsWith('debit') || n.includes('depense') || n === 'retrait' || n.includes('montant debit'))) {
       debitCol = h;
-    } else if (!creditCol && (n === 'credit' || n === 'recette' || n === 'depot' || n.includes('montant credit') || n.includes('credits'))) {
+    } else if (!creditCol && (n.startsWith('credit') || n.includes('recette') || n === 'depot' || n.includes('montant credit'))) {
       creditCol = h;
     } else if (!amountCol && (n.includes('montant') || n.includes('total') || n.includes('solde') || n === 'prix' || n === 'ttc' || n === 'valeur')) {
       amountCol = h;
