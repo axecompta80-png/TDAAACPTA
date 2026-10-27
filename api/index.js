@@ -1219,7 +1219,13 @@ var settings_default = router4;
 // server/routes/backup.ts
 init_db();
 import { Router as Router5 } from "express";
+import { randomUUID } from "node:crypto";
 var router5 = Router5();
+var optionalId = (v) => identifier(v) ?? null;
+var optionalDate = (v) => {
+  const d = typeof v === "string" ? new Date(v) : null;
+  return d && !Number.isNaN(d.getTime()) ? d : null;
+};
 router5.post("/import-backup", handler(async (req, res) => {
   const user = getAuthUser(req);
   if (!user) return res.status(401).json({ error: "Authentification requise." });
@@ -1232,58 +1238,91 @@ router5.post("/import-backup", handler(async (req, res) => {
   if (dossiers.length > 500 || entries.length > 2e4) {
     return res.status(400).json({ error: "Sauvegarde trop volumineuse (500 dossiers / 20000 \xE9critures maximum)." });
   }
-  const restoredDossierIds = /* @__PURE__ */ new Set();
+  const restorable = /* @__PURE__ */ new Map();
   for (const raw of dossiers) {
     const id = identifier(raw?.id);
     const parsed = validateDossierInput(raw);
     if (!id || !parsed.ok || !await findAccessibleDossier(req, id)) continue;
-    await prisma.appNotification.deleteMany({ where: { dossierId: id } });
-    await prisma.journalEntry.deleteMany({ where: { clientDossierId: id } });
-    await prisma.clientDossier.update({ where: { id }, data: dossierData(parsed.data) });
-    restoredDossierIds.add(id);
+    restorable.set(id, parsed.data);
   }
-  if (restoredDossierIds.size === 0) {
+  if (restorable.size === 0) {
     return res.status(400).json({ error: "Aucun dossier de cette sauvegarde ne correspond \xE0 vos dossiers." });
   }
-  for (const raw of entries) {
+  const dossierIds = [...restorable.keys()];
+  const [accounts, invoices] = await Promise.all([
+    prisma.syscohadaAccount.findMany({ where: { OR: [{ dossierId: null }, { dossierId: { in: dossierIds } }] }, select: { code: true, dossierId: true } }),
+    prisma.invoice.findMany({ where: { clientDossierId: { in: dossierIds } }, select: { id: true, clientDossierId: true } })
+  ]);
+  const accountOk = (code, dossierId) => accounts.some((a) => a.code === code && (a.dossierId === null || a.dossierId === dossierId));
+  const invoiceDossier = new Map(invoices.map((i) => [i.id, i.clientDossierId]));
+  const errors = [];
+  const usedIds = /* @__PURE__ */ new Set();
+  const entryRows = [];
+  const auditRows = [];
+  entries.forEach((raw, i) => {
     const dossierId = identifier(raw?.clientDossierId);
-    if (!dossierId || !restoredDossierIds.has(dossierId)) continue;
+    if (!dossierId || !restorable.has(dossierId)) return;
+    const where = `\xE9criture n\xB0${i + 1} \xAB ${String(raw?.label ?? "").slice(0, 40)} \xBB`;
     const parsed = validateEntryInput(raw, { trusted: true });
-    if (!parsed.ok) continue;
+    if (!parsed.ok) return void errors.push(`${where} : ${parsed.error}`);
     const e = parsed.data;
-    const id = identifier(raw?.id) ?? void 0;
-    await prisma.journalEntry.create({
-      data: {
-        ...id ? { id } : {},
-        date: new Date(e.date),
-        label: e.label,
-        pieceRef: e.pieceRef,
-        debitAccountCode: e.debitAccountCode,
-        creditAccountCode: e.creditAccountCode,
-        amount: e.amount,
-        tvaAmount: e.tvaAmount,
-        clientDossierId: dossierId,
-        status: e.status,
-        confidenceScore: e.confidenceScore,
-        detectedAnomaly: e.detectedAnomaly,
-        rawInput: e.rawInput,
-        inputType: e.inputType,
-        explanationSimplified: e.explanationSimplified,
-        paymentMethod: e.paymentMethod,
-        auditTrail: {
-          create: e.auditTrail.map((a) => ({
-            id: a.id,
-            timestamp: new Date(a.timestamp),
-            action: a.action,
-            author: a.author,
-            notes: a.notes,
-            previousValue: a.previousValue,
-            confidenceScore: a.confidenceScore
-          }))
-        }
-      }
+    const unknown = [e.debitAccountCode, e.creditAccountCode].filter((c) => !accountOk(c, dossierId));
+    if (unknown.length) return void errors.push(`${where} : compte inconnu ${unknown.join(", ")}`);
+    let id = identifier(raw?.id);
+    if (!id || usedIds.has(id)) id = randomUUID();
+    usedIds.add(id);
+    const invoiceId = optionalId(raw?.invoiceId);
+    entryRows.push({
+      id,
+      date: new Date(e.date),
+      label: e.label,
+      pieceRef: e.pieceRef,
+      debitAccountCode: e.debitAccountCode,
+      creditAccountCode: e.creditAccountCode,
+      amount: e.amount,
+      tvaAmount: e.tvaAmount,
+      clientDossierId: dossierId,
+      status: e.status,
+      confidenceScore: e.confidenceScore,
+      detectedAnomaly: e.detectedAnomaly,
+      rawInput: e.rawInput,
+      inputType: e.inputType,
+      explanationSimplified: e.explanationSimplified,
+      paymentMethod: e.paymentMethod,
+      createdById: optionalId(raw?.createdById),
+      updatedById: optionalId(raw?.updatedById),
+      validatedById: optionalId(raw?.validatedById),
+      validatedAt: optionalDate(raw?.validatedAt),
+      invoiceId: invoiceId && invoiceDossier.get(invoiceId) === dossierId ? invoiceId : null
+    });
+    for (const a of e.auditTrail) {
+      auditRows.push({
+        id: a.id,
+        journalEntryId: id,
+        timestamp: new Date(a.timestamp),
+        action: a.action,
+        author: a.author,
+        notes: a.notes,
+        previousValue: a.previousValue,
+        confidenceScore: a.confidenceScore
+      });
+    }
+  });
+  if (errors.length) {
+    return res.status(400).json({
+      error: `Sauvegarde non restaur\xE9e, rien n'a \xE9t\xE9 modifi\xE9. ${errors.length} \xE9criture(s) refus\xE9e(s) : ${errors.slice(0, 3).join(" ; ")}${errors.length > 3 ? "\u2026" : ""}`
     });
   }
+  await prisma.$transaction(async (tx) => {
+    const payments = await tx.invoicePayment.findMany({ where: { entry: { clientDossierId: { in: dossierIds } } } });
+    await tx.appNotification.deleteMany({ where: { dossierId: { in: dossierIds } } });
+    await tx.journalEntry.deleteMany({ where: { clientDossierId: { in: dossierIds } } });
+    for (const [id, data] of restorable) await tx.clientDossier.update({ where: { id }, data: dossierData(data) });
+    await tx.journalEntry.createMany({ data: entryRows });
+    await tx.auditLog.createMany({ data: auditRows, skipDuplicates: true });
+    const kept = payments.filter((p) => usedIds.has(p.entryId));
+    if (kept.length) await tx.invoicePayment.createMany({ data: kept });
+  }, { timeout: 12e4, maxWait: 1e4 });
   res.json(await buildBootstrapPayload(req));
 }));
 var backup_default = router5;
@@ -2251,7 +2290,7 @@ function greetingReply(dossier, text2, userName) {
 
 // server/agent/buildEntries.ts
 init_syscohadaPlan();
-import { randomUUID } from "crypto";
+import { randomUUID as randomUUID2 } from "crypto";
 var accountByCode = new Map(SYSCOHADA_ACCOUNTS.map((a) => [a.code, a]));
 function accountLabel(code) {
   const acc = accountByCode.get(code);
@@ -2488,7 +2527,7 @@ function buildEntries(ops, { ctx, rawInput, inputType, source }) {
       const ref = op.pieceRef ?? `OP-${Math.floor(1e3 + Math.random() * 9e3)}`;
       const explanation = explain(op, line.method, op.amount, paid, assumed);
       out.push({
-        id: `entry-${randomUUID()}`,
+        id: `entry-${randomUUID2()}`,
         clientDossierId: dossier.id,
         date,
         label: `${op.label}${line.suffix ?? ""}`.slice(0, 160),
@@ -2507,7 +2546,7 @@ function buildEntries(ops, { ctx, rawInput, inputType, source }) {
         explanationSimplified: explanation,
         paymentMethod: line.method,
         auditTrail: [{
-          id: `aud-${randomUUID()}`,
+          id: `aud-${randomUUID2()}`,
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           action,
           author: "Agent AxeCompta (IA Syscohada)",

@@ -209,7 +209,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             dossiers: parsed.dossiers,
             entries: parsed.entries || []
           });
-          showFeedback('Sauvegarde restaurée avec succès.');
+          // Le résultat (succès ou motif du refus) est affiché par l'application après la réponse du serveur.
         } else {
           alert('Le fichier sélectionné ne semble pas être une sauvegarde AxeCompta valide.');
         }

@@ -87,6 +87,28 @@ t("C ne règle pas le dossier de A", (await call('C', '/settings/update', { ...b
 t("C ne supprime pas le dossier de A", (await call('C', `/dossiers/${D}/delete`, {})).s === 404);
 t("C n'utilise pas l'agent sur ce dossier", (await call('C', '/agent/chat', { dossierId: D, message: 'Combien ai-je vendu ?' })).s === 404);
 
+console.log('SAUVEGARDE JSON');
+const facture = await call('A', '/invoices', { clientDossierId: D, date: '2026-10-24', mode: 'credit', customerName: 'Client', vatRate: 18, lines: [{ description: 'Article', quantity: 2, unitPrice: 5000 }] });
+await call('A', `/invoices/${facture.j?.id}/validate`, {});
+const reglement = await call('A', `/invoices/${facture.j?.id}/payments`, { newPayment: { date: '2026-10-25', amount: 5000, paymentMethod: 'wave' } });
+t('facture validée et réglée en partie', reglement.s === 201 && reglement.j?.invoice?.payments?.length === 1, reglement.j);
+const snapshot = (boot: any) => JSON.stringify(boot.entries.filter((e: any) => e.clientDossierId === D)
+  .map(({ id, date, label, pieceRef, debitAccountCode, creditAccountCode, amount, tvaAmount, status, invoiceId, validatedAt, auditTrail }: any) =>
+    ({ id, date, label, pieceRef, debitAccountCode, creditAccountCode, amount, tvaAmount, status, invoiceId, validatedAt, audit: auditTrail.length }))
+  .sort((x: any, y: any) => x.id.localeCompare(y.id)));
+const before = (await call('A', '/bootstrap')).j;
+const sauvegarde = { dossiers: before.dossiers.filter((x: any) => x.id === D), entries: before.entries };
+const restored = await call('A', '/import-backup', sauvegarde);
+t('restauration acceptée', restored.s === 200, restored.j);
+t('écritures restituées à l\'identique (montants, dates, statuts, liens facture, audit)', snapshot(restored.j) === snapshot(before), [snapshot(restored.j).slice(0, 200), snapshot(before).slice(0, 200)]);
+const factureApres = restored.j?.invoices?.find((i: any) => i.id === facture.j?.id);
+t('paiement de la facture conservé', factureApres?.payments?.length === 1 && factureApres.payments[0].amount === 5000, factureApres);
+const abimee = { ...sauvegarde, entries: [...sauvegarde.entries, { ...sauvegarde.entries.find((e: any) => e.clientDossierId === D), id: 'casse', amount: -3 }] };
+const refus = await call('A', '/import-backup', abimee);
+t('sauvegarde avec une écriture invalide : refusée avec le motif', refus.s === 400 && /refusée/.test(refus.j?.error), refus.j);
+t('… et rien n\'a été modifié', snapshot((await call('A', '/bootstrap')).j) === snapshot(before));
+t("C ne restaure pas le dossier de A", (await call('C', '/import-backup', sauvegarde)).s === 400);
+
 console.log('SUPPRESSION D\'UN DOSSIER');
 t('A supprime le dossier', (await call('A', `/dossiers/${D}/delete`, {})).s === 204);
 t('le dossier a disparu', (await call('A', `/dossiers/${D}`)).s === 404);

@@ -32,6 +32,7 @@ export interface ColumnMapping {
   debitAccountCol?: string; // If explicit account code
   creditAccountCol?: string; // If explicit account code
   paymentMethodCol?: string;
+  tvaCol?: string;
 }
 
 // Intelligent detection of column names from headers
@@ -47,26 +48,29 @@ export function detectColumns(headers: string[]): ColumnMapping {
   let debitAccountCol = '';
   let creditAccountCol = '';
   let paymentMethodCol = '';
+  let tvaCol = '';
 
   headers.forEach(h => {
     const n = norm(h);
-    if (!dateCol && (n.includes('date') || n === 'jour' || n === 'periode' || n.includes('valeur'))) {
+    if (!dateCol && (n.includes('date') || n === 'jour' || n === 'periode')) {
       dateCol = h;
+    } else if (!tvaCol && (/\btva\b/.test(n) || n.includes('taxe'))) {
+      tvaCol = h;
+    } else if (!debitAccountCol && (n.includes('compte d') || n.includes('debit compte') || n.includes('code d') || n === 'cpt debit' || n === 'compte_debit')) {
+      debitAccountCol = h;
+    } else if (!creditAccountCol && (n.includes('compte c') || n.includes('credit compte') || n.includes('code c') || n === 'cpt credit' || n === 'compte_credit')) {
+      creditAccountCol = h;
+    } else if (!debitCol && (n.startsWith('debit') || n.includes('depense') || n.startsWith('retrait') || n.startsWith('sortie') || n.includes('montant debit'))) {
+      debitCol = h;
+    } else if (!creditCol && (n.startsWith('credit') || n.includes('recette') || n.startsWith('depot') || n.startsWith('entree') || n.includes('montant credit'))) {
+      creditCol = h;
+    } else if ((!amountCol || n.includes('ttc')) && (n.includes('montant') || n.includes('total') || n === 'prix' || n.includes('ttc') || n === 'valeur' || n === 'somme')) {
+      amountCol = h; // TTC prioritaire sur un « Montant HT » vu avant
     } else if (!pieceRefCol && (n.includes('piece') || n.includes('ref') || n.includes('facture') || n.includes('num') || n.includes('n°') || n.includes('recu'))) {
       pieceRefCol = h;
-    } else if (!debitAccountCol && (n.includes('compte d') || n.includes('debit compte') || n.includes('code d') || n === 'compte debit' || n === 'cpt debit' || n === 'compte_debit')) {
-      debitAccountCol = h;
-    } else if (!creditAccountCol && (n.includes('compte c') || n.includes('credit compte') || n.includes('code c') || n === 'compte credit' || n === 'cpt credit' || n === 'compte_credit')) {
-      creditAccountCol = h;
-    } else if (!debitCol && (n.startsWith('debit') || n.includes('depense') || n === 'retrait' || n.includes('montant debit'))) {
-      debitCol = h;
-    } else if (!creditCol && (n.startsWith('credit') || n.includes('recette') || n === 'depot' || n.includes('montant credit'))) {
-      creditCol = h;
-    } else if (!amountCol && (n.includes('montant') || n.includes('total') || n.includes('solde') || n === 'prix' || n === 'ttc' || n === 'valeur')) {
-      amountCol = h;
     } else if (!paymentMethodCol && (n.includes('reglement') || n.includes('paiement') || n.includes('moyen') || n.includes('canal') || n.includes('mode'))) {
       paymentMethodCol = h;
-    } else if (!labelCol && (n.includes('libelle') || n.includes('designation') || n.includes('description') || n.includes('motif') || n.includes('operation') || n.includes('detail') || n.includes('tiers') || n.includes('nom'))) {
+    } else if (!labelCol && (n.includes('libelle') || n.includes('designation') || n.includes('description') || n.includes('motif') || n.includes('operation') || n.includes('transaction') || n.includes('detail') || n.includes('tiers') || n.includes('nom'))) {
       labelCol = h;
     }
   });
@@ -90,7 +94,8 @@ export function detectColumns(headers: string[]): ColumnMapping {
     pieceRefCol: pieceRefCol || undefined,
     debitAccountCol: debitAccountCol || undefined,
     creditAccountCol: creditAccountCol || undefined,
-    paymentMethodCol: paymentMethodCol || undefined
+    paymentMethodCol: paymentMethodCol || undefined,
+    tvaCol: tvaCol || undefined
   };
 }
 
@@ -227,6 +232,16 @@ export function classifyTransactionSmart(
     anomaly = 'Classification par défaut : vérifier l’intitulé de la dépense';
   }
 
+  // Comptes donnés par le fichier : ils priment. S'il n'y en a qu'un, l'autre côté est la trésorerie
+  // (ou, si le compte donné est lui-même de trésorerie, la contrepartie déduite du libellé).
+  if (explicitDebit || explicitCredit) {
+    const isTreasury = (c?: string) => !!c && c.startsWith('5');
+    debitCode = explicitDebit || (isTreasury(explicitCredit) ? debitCode : treasuryCode);
+    creditCode = explicitCredit || (isTreasury(explicitDebit) ? creditCode : treasuryCode);
+    confidence = 90;
+    anomaly = debitCode === creditCode ? 'Compte au débit identique au compte au crédit : à corriger' : undefined;
+  }
+
   // Sanity check on cash amounts (OHADA: payments > 500 000 FCFA in cash have tax warnings)
   if (method === 'cash' && amount > 500000) {
     anomaly = 'Paiement en espèces supérieur à 500 000 FCFA : attention à la déductibilité fiscale OHADA';
@@ -246,19 +261,86 @@ export function classifyTransactionSmart(
   };
 }
 
-// Parse Excel file buffer into raw JSON rows
-export function parseExcelBuffer(buffer: ArrayBuffer): { sheetNames: string[]; rowsBySheet: Record<string, any[]> } {
-  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
-  const sheetNames = workbook.SheetNames;
+/** Texte d'un CSV : UTF-8, sinon Windows-1252 (CSV enregistré par Excel en français). */
+function decodeText(buffer: ArrayBuffer): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch {
+    return new TextDecoder('windows-1252').decode(buffer);
+  }
+}
+
+const HEADER_HINT = /date|libell|montant|debit|credit|designation|description|operation|reference|piece|compte/;
+
+/**
+ * Lecture d'un classeur : valeurs brutes (nombres, dates), jamais le texte affiché par Excel
+ * (format anglais « 185,000 » ou « 9/2/26 » qui faussait montants et dates).
+ * La ligne d'en-tête est cherchée sous d'éventuelles lignes de titre (relevés bancaires).
+ */
+export function parseExcelBuffer(buffer: ArrayBuffer, fileName = ''): { sheetNames: string[]; rowsBySheet: Record<string, any[]> } {
+  const workbook = /\.(csv|txt)$/i.test(fileName)
+    // raw : le CSV reste en texte, dates jj/mm et montants « 1 234,50 » sont lus par parseCellDate / parseCellAmount.
+    ? XLSX.read(decodeText(buffer), { type: 'string', raw: true })
+    : XLSX.read(buffer, { type: 'array', cellDates: true });
   const rowsBySheet: Record<string, any[]> = {};
 
-  sheetNames.forEach(name => {
+  workbook.SheetNames.forEach(name => {
     const sheet = workbook.Sheets[name];
-    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
-    rowsBySheet[name] = rows;
+    const grid = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: '', raw: true, blankrows: true });
+    const filled = (r: any[]) => r.filter(c => String(c).trim() !== '').length;
+    const norm = (c: any) => String(c).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    let headerRow = grid.findIndex((r, i) => i < 30 && filled(r) >= 2 && r.some(c => typeof c === 'string' && HEADER_HINT.test(norm(c))));
+    if (headerRow < 0) headerRow = Math.max(0, grid.findIndex(r => filled(r) >= 2));
+    const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
+    range.s.r += headerRow;
+    rowsBySheet[name] = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: true, range });
   });
 
-  return { sheetNames, rowsBySheet };
+  return { sheetNames: workbook.SheetNames, rowsBySheet };
+}
+
+/** Date d'une cellule en AAAA-MM-JJ, ou null si illisible. Texte lu jour avant mois (usage francophone). */
+export function parseCellDate(value: unknown): string | null {
+  const iso = (y: number, m: number, d: number) => {
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d ? dt.toISOString().slice(0, 10) : null;
+  };
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    // Excel donne minuit (parfois à quelques secondes près) : +12 h évite de tomber sur la veille.
+    const t = new Date(value.getTime() + 12 * 3600e3);
+    return iso(t.getFullYear(), t.getMonth() + 1, t.getDate());
+  }
+  if (typeof value === 'number') {
+    const p = value > 0 && value < 2958466 ? XLSX.SSF.parse_date_code(value) : null; // numéro de série Excel
+    return p ? iso(p.y, p.m, p.d) : null;
+  }
+  const s = String(value ?? '').trim();
+  let m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (m) return iso(+m[1], +m[2], +m[3]);
+  m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4}|\d{2})(?!\d)/);
+  if (m) return iso(m[3].length === 2 ? 2000 + +m[3] : +m[3], +m[2], +m[1]);
+  return null;
+}
+
+/**
+ * Montant d'une cellule, ou null si vide. Gère « 1 234 567 », « 1.234.567 », « 185,000 »,
+ * « 1 234,50 », « 25 000 FCFA », « -25 000 » et « (25 000) ».
+ * Le dernier séparateur suivi d'1 ou 2 chiffres est décimal, les autres sont des milliers.
+ */
+export function parseCellAmount(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const raw = String(value ?? '').trim();
+  const s = raw.replace(/[^\d,.]/g, '');
+  if (!/\d/.test(s)) return null;
+  const signs = raw.replace(/[^\d,.()\-]/g, '');
+  const negative = /^\(.*\)$/.test(signs) || signs.startsWith('-') || signs.endsWith('-');
+  const last = Math.max(s.lastIndexOf(','), s.lastIndexOf('.'));
+  const decimals = last >= 0 ? s.length - last - 1 : -1;
+  const n = decimals >= 0 && decimals <= 2
+    ? parseFloat(`${s.slice(0, last).replace(/[.,]/g, '')}.${s.slice(last + 1) || '0'}`)
+    : parseFloat(s.replace(/[.,]/g, ''));
+  return negative ? -n : n;
 }
 
 // Generate sample downloadable Excel template files

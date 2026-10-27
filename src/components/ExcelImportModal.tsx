@@ -3,6 +3,8 @@ import { JournalEntry, ClientDossier, PaymentMethod, TransactionStatus } from '.
 import { SYSCOHADA_ACCOUNTS } from '../data/syscohadaPlan';
 import { 
   parseExcelBuffer, 
+  parseCellAmount,
+  parseCellDate,
   detectColumns, 
   classifyTransactionSmart, 
   generateSampleExcelTemplate,
@@ -69,7 +71,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
     try {
       const buffer = await file.arrayBuffer();
-      const { sheetNames, rowsBySheet } = parseExcelBuffer(buffer);
+      const { sheetNames, rowsBySheet } = parseExcelBuffer(buffer, file.name);
 
       if (sheetNames.length === 0 || !rowsBySheet[sheetNames[0]] || rowsBySheet[sheetNames[0]].length === 0) {
         alert("Le fichier Excel est vide ou ne contient aucune ligne exploitable.");
@@ -103,82 +105,68 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   // Convert raw rows into ParsedRowPreview with auto-SYSCOHADA classification
   const buildPreview = (rawRows: any[], mapping: ColumnMapping) => {
     const previews: ParsedRowPreview[] = [];
+    const cell = (row: any, col?: string) => (col ? String(row[col] ?? '').trim() : '');
+    const amountOf = (row: any, col?: string) => (col ? parseCellAmount(row[col]) ?? 0 : 0);
+    // Colonne montant signée (au moins un négatif) : positif = recette, négatif = dépense.
+    // Sans négatif, le sens vient du libellé (un journal d'achats n'a que des montants positifs).
+    const signed = !!mapping.amountCol && rawRows.some(r => amountOf(r, mapping.amountCol) < 0);
 
     rawRows.forEach((row, idx) => {
-      // Date extraction
-      let dateVal = row[mapping.dateCol] || new Date().toISOString().split('T')[0];
-      if (dateVal instanceof Date) {
-        dateVal = dateVal.toISOString().split('T')[0];
-      } else if (typeof dateVal === 'string' && dateVal.includes('/')) {
-        // e.g. 05/09/2026 -> 2026-09-05
-        const parts = dateVal.split('/');
-        if (parts.length === 3) {
-          dateVal = `${parts[2].trim().padStart(4, '20')}-${parts[1].trim().padStart(2, '0')}-${parts[0].trim().padStart(2, '0')}`;
-        }
-      }
+      const labelVal = cell(row, mapping.labelCol).slice(0, 300);
 
-      // Label extraction
-      const labelVal = String(row[mapping.labelCol] || `Opération ligne ${idx + 1}`).trim();
-      if (!labelVal) return; // skip empty rows
-
-      // Amount extraction
       let amount = 0;
       let isCreditMovement = false;
-
-      if (mapping.debitCol && mapping.creditCol) {
-        const dVal = parseFloat(String(row[mapping.debitCol] || '0').replace(/\s/g, '').replace(',', '.'));
-        const cVal = parseFloat(String(row[mapping.creditCol] || '0').replace(/\s/g, '').replace(',', '.'));
-
-        if (!isNaN(cVal) && cVal > 0) {
-          amount = cVal;
-          isCreditMovement = true;
-        } else if (!isNaN(dVal) && dVal > 0) {
-          amount = dVal;
-          isCreditMovement = false;
-        }
-      } else if (mapping.amountCol) {
-        const rawAmt = parseFloat(String(row[mapping.amountCol] || '0').replace(/\s/g, '').replace(',', '.'));
-        amount = Math.abs(isNaN(rawAmt) ? 0 : rawAmt);
-        if (rawAmt < 0) {
-          isCreditMovement = false; // negative often means expense
-        }
+      const credit = Math.abs(amountOf(row, mapping.creditCol));
+      const debit = Math.abs(amountOf(row, mapping.debitCol));
+      if (credit > 0) {
+        amount = credit;
+        isCreditMovement = true;
+      } else if (debit > 0) {
+        amount = debit;
+      } else {
+        const signedAmount = amountOf(row, mapping.amountCol);
+        amount = Math.abs(signedAmount);
+        isCreditMovement = signed && signedAmount > 0;
       }
+      amount = Math.round(amount * 100) / 100;
+      if (!labelVal && amount === 0) return; // ligne vide, de séparation ou de sous-total
 
-      // Piece Ref
-      const pieceRef = mapping.pieceRefCol && row[mapping.pieceRefCol]
-        ? String(row[mapping.pieceRefCol]).trim()
-        : `IMP-XL-${String(idx + 1).padStart(3, '0')}`;
-
-      // Explicit or Inferred Accounts
-      const explicitDebit = mapping.debitAccountCol ? String(row[mapping.debitAccountCol]).trim() : undefined;
-      const explicitCredit = mapping.creditAccountCol ? String(row[mapping.creditAccountCol]).trim() : undefined;
-      const paymentHint = mapping.paymentMethodCol ? String(row[mapping.paymentMethodCol]).trim() : undefined;
+      const date = parseCellDate(row[mapping.dateCol]);
+      const tvaAmount = Math.round(Math.abs(amountOf(row, mapping.tvaCol)) * 100) / 100;
+      const pieceRef = (cell(row, mapping.pieceRefCol) || `IMP-XL-${String(idx + 1).padStart(3, '0')}`).slice(0, 80);
 
       const classification = classifyTransactionSmart(
-        labelVal, 
-        amount, 
-        isCreditMovement, 
-        explicitDebit, 
-        explicitCredit, 
-        paymentHint
+        labelVal,
+        amount,
+        isCreditMovement,
+        cell(row, mapping.debitAccountCol) || undefined,
+        cell(row, mapping.creditAccountCol) || undefined,
+        cell(row, mapping.paymentMethodCol) || undefined
       );
+
+      // Ligne non importable telle quelle : signalée et décochée plutôt que devinée.
+      const blocking = !date ? `Date illisible (« ${cell(row, mapping.dateCol) || 'vide'} ») : ligne ignorée`
+        : amount === 0 ? 'Montant absent ou nul : ligne ignorée'
+        : !labelVal ? 'Libellé vide : ligne ignorée'
+        : tvaAmount > amount ? 'TVA supérieure au montant : ligne ignorée'
+        : undefined;
 
       previews.push({
         id: `preview-${idx}-${Date.now()}`,
         rowIndex: idx + 1,
-        selected: true,
-        date: String(dateVal),
+        selected: !blocking,
+        date: date ?? '',
         pieceRef,
-        label: labelVal,
+        label: labelVal || '(sans libellé)',
         amount,
         debitAccountCode: classification.debitCode,
         debitAccountLabel: classification.debitLabel,
         creditAccountCode: classification.creditCode,
         creditAccountLabel: classification.creditLabel,
         paymentMethod: classification.paymentMethod,
-        tvaAmount: Math.round(amount * 0.18),
+        tvaAmount,
         confidenceScore: classification.confidence,
-        anomaly: classification.anomaly,
+        anomaly: blocking ?? classification.anomaly,
         originalRaw: row
       });
     });
@@ -209,13 +197,15 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   };
 
   // Toggle selection
+  const importable = (r: ParsedRowPreview) => !!r.date && r.amount > 0 && r.tvaAmount <= r.amount && r.label !== '(sans libellé)';
+
   const toggleRowSelect = (id: string) => {
-    setParsedRows(prev => prev.map(r => r.id === id ? { ...r, selected: !r.selected } : r));
+    setParsedRows(prev => prev.map(r => r.id === id && importable(r) ? { ...r, selected: !r.selected } : r));
   };
 
   const toggleSelectAll = () => {
-    const allSelected = parsedRows.every(r => r.selected);
-    setParsedRows(prev => prev.map(r => ({ ...r, selected: !allSelected })));
+    const allSelected = parsedRows.filter(importable).every(r => r.selected);
+    setParsedRows(prev => prev.map(r => ({ ...r, selected: !allSelected && importable(r) })));
   };
 
   // Update row account directly in preview
@@ -620,6 +610,19 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                       className="w-full bg-white border border-[#DDD6FE] rounded-lg p-2 font-medium"
                     >
                       <option value="">(Auto-détecté par IA si non spécifié)</option>
+                      {headers.map(h => <option key={h} value={h}>{h}</option>)}
+                    </select>
+                  </div>
+
+                  {/* TVA */}
+                  <div className="p-3 bg-[#FAF8FF] border border-[#DDD6FE] rounded-xl space-y-1">
+                    <label className="font-bold text-[#1E084A] block">Montant de TVA</label>
+                    <select
+                      value={columnMapping.tvaCol || ''}
+                      onChange={(e) => updateMappingField('tvaCol', e.target.value)}
+                      className="w-full bg-white border border-[#DDD6FE] rounded-lg p-2 font-medium"
+                    >
+                      <option value="">(Aucune : TVA à 0)</option>
                       {headers.map(h => <option key={h} value={h}>{h}</option>)}
                     </select>
                   </div>

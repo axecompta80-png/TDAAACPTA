@@ -247,9 +247,10 @@ export default function App({ currentUser, onLogout }: AppProps) {
           actionPayload: { mode: 'expert', expertTab: 'journal' }
         }
       );
-    } catch (e) {
+    } catch (e: any) {
       console.error('Erreur lors de l\'import Excel', e);
-      showToast("Erreur lors de l'import des écritures.");
+      // Message du serveur (ex. compte inconnu) : l'utilisateur sait quoi corriger.
+      showToast(e?.message || "Erreur lors de l'import des écritures.");
     }
   };
 
