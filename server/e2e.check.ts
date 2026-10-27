@@ -1,6 +1,6 @@
 // Test de bout en bout de l'API, sur un serveur lancé (base de test conseillée) :
 //   ADMIN_EMAIL=… ADMIN_PASSWORD=… BASE_URL=http://localhost:3001 npx tsx server/e2e.check.ts
-// Crée des comptes jetables (entreprise A, propriétaire B d'un dossier de A, entreprise C),
+// Crée des comptes jetables (entreprise A avec ses dossiers, entreprise C),
 // vérifie le cloisonnement et les droits, puis supprime ce qu'il a créé.
 const BASE = (process.env.BASE_URL ?? 'http://localhost:3001') + '/api';
 const ADMIN = { email: process.env.ADMIN_EMAIL ?? '', password: process.env.ADMIN_PASSWORD ?? '' };
@@ -53,63 +53,43 @@ t("A tient sa comptabilité sans créer de dossier", eM.s === 201, eM.j);
 await call('C', '/company', companyBody('Entreprise C'));
 
 console.log('AJOUTER UN DOSSIER');
-t('nom du dossier obligatoire', (await call('A', '/dossiers', { name: '', ownerName: 'B', email: mail('b'), password: PWD })).s === 400);
-t('mot de passe trop court refusé', (await call('A', '/dossiers', { name: 'Boutique', ownerName: 'B', email: mail('b'), password: 'court' })).s === 400);
-const d = await call('A', '/dossiers', { name: 'Boutique Plateau', ownerName: 'Propriétaire B', email: mail('b'), password: PWD });
-t('A crée un dossier confié à B', d.s === 201 && d.j?.name === 'Boutique Plateau' && d.j?.ownerName === 'Propriétaire B' && !d.j?.isMain, d.j);
+t('nom du dossier obligatoire', (await call('A', '/dossiers', { name: '' })).s === 400);
+const d = await call('A', '/dossiers', { name: 'Boutique Plateau', ownerName: 'Propriétaire B' });
+t('A crée un dossier avec un propriétaire', d.s === 201 && d.j?.name === 'Boutique Plateau' && d.j?.ownerName === 'Propriétaire B' && !d.j?.isMain, d.j);
 const D = d.j?.id;
 t("infos fiscales copiées de l'entreprise", d.j?.rccm === 'SN-1' && d.j?.country === 'Sénégal', d.j);
-t('email déjà utilisé refusé', (await call('A', '/dossiers', { name: 'X', ownerName: 'X', email: mail('b'), password: PWD })).s === 409);
-
-console.log('PROPRIÉTAIRE DU DOSSIER');
-const b = await call('B', '/auth/login', { email: mail('b'), password: PWD });
-t('B se connecte avec son email', b.s === 200 && b.j?.dossierId === D, b.j);
-const bootB = (await call('B', '/bootstrap')).j;
-t('B ne charge que son dossier', bootB?.dossiers?.length === 1 && bootB.dossiers[0].id === D, bootB?.dossiers);
-t("B voit la liste (entreprise + dossiers) pour le sélecteur", bootB?.directory?.some((x: any) => x.id === M && x.isMain) && bootB?.directory?.some((x: any) => x.id === D), bootB?.directory);
-t("aucune donnée de l'entreprise chez B", !bootB?.entries?.some((e: any) => e.clientDossierId === M) && !bootB?.settingsByDossier?.[M]);
-const openMain = await call('B', `/dossiers/${M}`);
-t('B ouvre l\'entreprise : 403 « pas accès »', openMain.s === 403 && openMain.j?.error === NO_ACCESS, openMain);
-t('B ouvre son dossier', (await call('B', `/dossiers/${D}`)).s === 200);
-const eB = await call('B', '/entries', entryBody(D, 'B1'));
-t("B saisit dans son dossier : sans anomalie, validée d'office (aucun seuil)", eB.s === 201 && eB.j?.status === 'validated', eB.j);
-t('B dévalide', (await call('B', `/entries/${eB.j?.id}/unvalidate`, {})).j?.status === 'pending_review');
-t('B revalide', (await call('B', '/entries/batch-validate', { ids: [eB.j?.id] })).j?.validated?.length === 1);
-const eAno = await call('B', '/entries', { ...entryBody(D, 'B3'), detectedAnomaly: 'Doublon possible' });
-t('une anomalie reste à vérifier', eAno.s === 201 && eAno.j?.status !== 'validated', eAno.j);
-t("B ne saisit pas dans l'entreprise", (await call('B', '/entries', entryBody(M, 'B2'))).s === 404);
-t("B ne valide pas une écriture de l'entreprise", (await call('B', `/entries/${eM.j?.id}/unvalidate`, {})).s === 404);
-const inv = await call('B', '/invoices', { clientDossierId: D, date: '2026-10-24', mode: 'credit', customerName: 'Client', vatRate: 18, lines: [{ description: 'Article', quantity: 2, unitPrice: 5000 }] });
-t('B crée une facture', inv.s === 201, inv.j);
-t('B émet la facture', (await call('B', `/invoices/${inv.j?.id}/validate`, {})).j?.entries?.length >= 2);
-t("B n'ajoute pas de dossier", (await call('B', '/dossiers', { name: 'Y', ownerName: 'Y', email: mail('y'), password: PWD })).s === 403);
-t('B ne supprime pas son dossier', (await call('B', `/dossiers/${D}/delete`, {})).s === 403);
-t("B n'utilise pas l'agent sur l'entreprise", (await call('B', '/agent/chat', { dossierId: M, message: 'Combien ai-je vendu ?' })).s === 404);
+const sansProprio = await call('A', '/dossiers', { name: 'Dépôt Sud' });
+t('dossier avec le nom seul', sansProprio.s === 201 && !sansProprio.j?.ownerName, sansProprio.j);
 
 console.log('COMPTE PRINCIPAL');
 const bootA = (await call('A', '/bootstrap')).j;
 t("A voit l'entreprise et le dossier", bootA?.dossiers?.some((x: any) => x.id === M) && bootA?.dossiers?.some((x: any) => x.id === D), bootA?.dossiers);
-t('A voit les écritures de B', bootA?.entries?.some((e: any) => e.id === eB.j?.id));
+t('le propriétaire apparaît dans la liste', bootA?.directory?.some((x: any) => x.id === D && x.ownerName === 'Propriétaire B'), bootA?.directory);
 t('A ouvre le dossier', (await call('A', `/dossiers/${D}`)).s === 200);
+const eD = await call('A', '/entries', entryBody(D, 'D1'));
+t("A saisit dans le dossier : sans anomalie, validée d'office (aucun seuil)", eD.s === 201 && eD.j?.status === 'validated', eD.j);
+const eAno = await call('A', '/entries', { ...entryBody(D, 'D2'), detectedAnomaly: 'Doublon possible' });
+t('une anomalie reste à vérifier', eAno.s === 201 && eAno.j?.status !== 'validated', eAno.j);
 t("A ne supprime pas l'entreprise", (await call('A', `/dossiers/${M}/delete`, {})).s === 400);
 
 console.log('PARAMÈTRES');
 const base = bootA.settingsByDossier[M];
 const sM = await call('A', '/settings/update', { ...base, dossierId: M, soundVolume: 0.3 });
-t("paramètres de l'entreprise recopiés sur les dossiers", sM.j?.propagated === true && (await call('B', `/settings?dossierId=${D}`)).j?.soundVolume === 0.3, sM.j);
-const sD = await call('B', '/settings/update', { ...base, dossierId: D, soundVolume: 0.5 });
+t("paramètres de l'entreprise recopiés sur les dossiers", sM.j?.propagated === true && (await call('A', `/settings?dossierId=${D}`)).j?.soundVolume === 0.3, sM.j);
+const sD = await call('A', '/settings/update', { ...base, dossierId: D, soundVolume: 0.5 });
 t('paramètres du dossier : ce dossier seulement', sD.j?.propagated === false && (await call('A', `/settings?dossierId=${M}`)).j?.soundVolume === 0.3, sD.j);
-t("A depuis le dossier : ce dossier seulement", (await call('A', '/settings/update', { ...base, dossierId: D, soundVolume: 0.6 })).j?.propagated === false);
-t("B ne règle pas l'entreprise", (await call('B', '/settings/update', { ...base, dossierId: M })).s === 404);
 
 console.log('AUTRE ENTREPRISE');
 t("C n'ouvre pas le dossier de A", (await call('C', `/dossiers/${D}`)).s === 404);
 t("C ne voit pas A dans sa liste", !(await call('C', '/bootstrap')).j?.directory?.some((x: any) => x.id === M || x.id === D));
+t("C ne saisit pas dans le dossier de A", (await call('C', '/entries', entryBody(D, 'C1'))).s === 404);
+t("C ne règle pas le dossier de A", (await call('C', '/settings/update', { ...base, dossierId: D })).s === 404);
+t("C ne supprime pas le dossier de A", (await call('C', `/dossiers/${D}/delete`, {})).s === 404);
 t("C n'utilise pas l'agent sur ce dossier", (await call('C', '/agent/chat', { dossierId: D, message: 'Combien ai-je vendu ?' })).s === 404);
 
 console.log('SUPPRESSION D\'UN DOSSIER');
 t('A supprime le dossier', (await call('A', `/dossiers/${D}/delete`, {})).s === 204);
-t("le compte de B est supprimé avec", (await call('B', '/bootstrap')).s === 401 && (await call('B2', '/auth/login', { email: mail('b'), password: PWD })).s === 401);
+t('le dossier a disparu', (await call('A', `/dossiers/${D}`)).s === 404);
 
 console.log('MOT DE PASSE');
 t('refusé si mot de passe actuel faux', (await call('C', '/auth/change-password', { currentPassword: 'faux-faux', newPassword: 'Nouveau12345' })).s === 400);

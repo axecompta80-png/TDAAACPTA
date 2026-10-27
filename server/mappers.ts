@@ -50,7 +50,7 @@ export function serializeDossier(row: any): ClientDossier {
   return {
     id: row.id,
     isMain: Boolean(row.isMain),
-    ownerName: row.owner?.name ?? undefined,
+    ownerName: row.owner?.name ?? row.ownerName ?? undefined,
     name: row.name,
     managerName: row.managerName,
     phone: row.phone,

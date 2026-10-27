@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db';
 import { serializeDossier, REGIME_FISCAL_TO_DB } from '../mappers';
-import { getAuthUser, hashPassword } from '../auth';
+import { getAuthUser } from '../auth';
 import { dossierScopeWhere, findAccessibleDossier, isMainAccount, NO_ACCESS } from '../access';
 import { handler } from '../http';
 import { validateDossierInput, identifier, unwrap, DossierInput } from '../validation';
@@ -70,35 +70,24 @@ router.post('/company', handler(async (req, res) => {
 }));
 
 /**
- * « Ajouter un Dossier » (compte principal) : nom du dossier + propriétaire (nom, email, mot de passe).
- * Infos fiscales et réglages copiés de l'entreprise, compte du propriétaire créé dans la même transaction.
+ * « Ajouter un Dossier » (compte principal) : nom du dossier + nom du propriétaire (facultatif).
+ * Infos fiscales et réglages copiés de l'entreprise. Aucun compte de connexion n'est créé.
  */
 router.post('/dossiers', handler(async (req, res) => {
   if (!isMainAccount(req)) return mainOnly(res);
   const organizationId = getAuthUser(req)!.organizationId!;
-  const { name, ownerName, email, password } = req.body ?? {};
+  const { name, ownerName } = req.body ?? {};
   const cleanName = typeof name === 'string' ? name.trim().slice(0, 160) : '';
   const cleanOwner = typeof ownerName === 'string' ? ownerName.trim().slice(0, 120) : '';
-  const cleanEmail = typeof email === 'string' ? email.trim() : '';
   if (!cleanName) return res.status(400).json({ error: 'Nom du dossier requis.' });
-  if (!cleanOwner) return res.status(400).json({ error: 'Nom du propriétaire requis.' });
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return res.status(400).json({ error: 'Email invalide.' });
-  if (typeof password !== 'string' || password.length < 8) {
-    return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères.' });
-  }
-  if (await prisma.user.findUnique({ where: { email: cleanEmail } })) {
-    return res.status(409).json({ error: 'Un compte existe déjà avec cet email.' });
-  }
   const main = await prisma.clientDossier.findFirst({ where: { organizationId, isMain: true }, include: { settings: true } });
   if (!main) return res.status(400).json({ error: "Renseignez d'abord les informations de l'entreprise." });
 
-  const passwordHash = await hashPassword(password);
   const created = await prisma.$transaction(async tx => {
     const { id: _id, isMain: _m, createdAt: _c, updatedAt: _u, settings, ...fiscal } = main;
-    const row = await tx.clientDossier.create({ data: { ...fiscal, name: cleanName, isMain: false } });
+    const row = await tx.clientDossier.create({ data: { ...fiscal, name: cleanName, ownerName: cleanOwner || null, isMain: false } });
     if (settings) await tx.platformSettings.create({ data: { ...copySettings(settings), dossierId: row.id } });
     else await createDefaultPlatformSettings(tx as any, row.id);
-    await tx.user.create({ data: { email: cleanEmail, name: cleanOwner, passwordHash, role: 'COMPTABLE', organizationId, dossierId: row.id } });
     return tx.clientDossier.findUniqueOrThrow({ where: { id: row.id }, include: DOSSIER_INCLUDE });
   });
   res.status(201).json(serializeDossier(created));

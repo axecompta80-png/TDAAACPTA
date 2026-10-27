@@ -45,7 +45,7 @@ export const api = {
 
   // Entreprise et dossiers
   setupCompany: (data: DossierInfo) => request<ClientDossier>('/company', post(data)),
-  createDossier: (data: { name: string; ownerName: string; email: string; password: string }) =>
+  createDossier: (data: { name: string; ownerName?: string }) =>
     request<ClientDossier>('/dossiers', post(data)),
   updateDossier: (dossier: ClientDossier) =>
     request<ClientDossier>(`/dossiers/${dossier.id}/update`, { method: 'POST', body: JSON.stringify(dossier) }),

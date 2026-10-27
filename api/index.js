@@ -40,7 +40,7 @@ function serializeDossier(row) {
   return {
     id: row.id,
     isMain: Boolean(row.isMain),
-    ownerName: row.owner?.name ?? void 0,
+    ownerName: row.owner?.name ?? row.ownerName ?? void 0,
     name: row.name,
     managerName: row.managerName,
     phone: row.phone,
@@ -486,7 +486,7 @@ async function buildBootstrapPayload(req) {
     }),
     prisma.clientDossier.findMany({
       where: { organizationId: getAuthUser(req)?.organizationId ?? "__aucune__" },
-      select: { id: true, name: true, isMain: true, owner: { select: { name: true } } },
+      select: { id: true, name: true, isMain: true, ownerName: true, owner: { select: { name: true } } },
       orderBy: [{ isMain: "desc" }, { createdAt: "asc" }]
     }),
     prisma.journalEntry.findMany({
@@ -509,7 +509,7 @@ async function buildBootstrapPayload(req) {
   ]);
   return {
     dossiers: dossierRows.map(serializeDossier),
-    directory: directoryRows.map((d) => ({ id: d.id, name: d.name, isMain: d.isMain, ownerName: d.owner?.name })),
+    directory: directoryRows.map((d) => ({ id: d.id, name: d.name, isMain: d.isMain, ownerName: d.owner?.name ?? d.ownerName ?? void 0 })),
     entries: entryRows.map(serializeEntry),
     notifications: notificationRows.map(serializeNotification),
     settingsByDossier: Object.fromEntries(settingsRows.map((r) => [r.dossierId, serializePlatformSettings(r)])),
@@ -860,28 +860,17 @@ router.post("/company", handler(async (req, res) => {
 router.post("/dossiers", handler(async (req, res) => {
   if (!isMainAccount(req)) return mainOnly(res);
   const organizationId = getAuthUser(req).organizationId;
-  const { name, ownerName, email, password } = req.body ?? {};
+  const { name, ownerName } = req.body ?? {};
   const cleanName = typeof name === "string" ? name.trim().slice(0, 160) : "";
   const cleanOwner = typeof ownerName === "string" ? ownerName.trim().slice(0, 120) : "";
-  const cleanEmail = typeof email === "string" ? email.trim() : "";
   if (!cleanName) return res.status(400).json({ error: "Nom du dossier requis." });
-  if (!cleanOwner) return res.status(400).json({ error: "Nom du propri\xE9taire requis." });
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return res.status(400).json({ error: "Email invalide." });
-  if (typeof password !== "string" || password.length < 8) {
-    return res.status(400).json({ error: "Le mot de passe doit contenir au moins 8 caract\xE8res." });
-  }
-  if (await prisma.user.findUnique({ where: { email: cleanEmail } })) {
-    return res.status(409).json({ error: "Un compte existe d\xE9j\xE0 avec cet email." });
-  }
   const main = await prisma.clientDossier.findFirst({ where: { organizationId, isMain: true }, include: { settings: true } });
   if (!main) return res.status(400).json({ error: "Renseignez d'abord les informations de l'entreprise." });
-  const passwordHash = await hashPassword(password);
   const created = await prisma.$transaction(async (tx) => {
     const { id: _id, isMain: _m, createdAt: _c, updatedAt: _u, settings, ...fiscal } = main;
-    const row = await tx.clientDossier.create({ data: { ...fiscal, name: cleanName, isMain: false } });
+    const row = await tx.clientDossier.create({ data: { ...fiscal, name: cleanName, ownerName: cleanOwner || null, isMain: false } });
     if (settings) await tx.platformSettings.create({ data: { ...copySettings(settings), dossierId: row.id } });
     else await createDefaultPlatformSettings(tx, row.id);
-    await tx.user.create({ data: { email: cleanEmail, name: cleanOwner, passwordHash, role: "COMPTABLE", organizationId, dossierId: row.id } });
     return tx.clientDossier.findUniqueOrThrow({ where: { id: row.id }, include: DOSSIER_INCLUDE });
   });
   res.status(201).json(serializeDossier(created));
@@ -989,7 +978,7 @@ router2.post("/entries/import", handler(async (req, res) => {
   if (list.length === 0) return res.status(400).json({ error: "Aucune \xE9criture \xE0 importer." });
   if (list.length > 5e3) return res.status(400).json({ error: "Import limit\xE9 \xE0 5000 \xE9critures par op\xE9ration." });
   const author = await actorName(req);
-  const created = [];
+  const rows = [];
   for (const raw of list) {
     const dossierId = identifier(raw?.clientDossierId);
     if (!dossierId) return res.status(400).json({ error: "Une \xE9criture import\xE9e r\xE9f\xE9rence un dossier invalide." });
@@ -998,10 +987,10 @@ router2.post("/entries/import", handler(async (req, res) => {
     const e = unwrap(validateEntryInput(raw, { requireId: true }));
     const accountError = await assertAccountsUsable([e.debitAccountCode, e.creditAccountCode], dossierId);
     if (accountError) return res.status(400).json({ error: accountError });
-    const row = await prisma.journalEntry.create({ data: entryCreateData(e, dossier, userId(req), author), include: ENTRY_INCLUDE });
-    created.push(serializeEntry(row));
+    rows.push(entryCreateData(e, dossier, userId(req), author));
   }
-  res.status(201).json(created);
+  const created = await prisma.$transaction(rows.map((data) => prisma.journalEntry.create({ data, include: ENTRY_INCLUDE })));
+  res.status(201).json(created.map(serializeEntry));
 }));
 router2.post("/entries/:id/update", handler(async (req, res) => {
   const id = identifier(req.params.id);

@@ -31,7 +31,7 @@ export async function buildBootstrapPayload(req: Request) {
     }),
     prisma.clientDossier.findMany({
       where: { organizationId: getAuthUser(req)?.organizationId ?? '__aucune__' },
-      select: { id: true, name: true, isMain: true, owner: { select: { name: true } } },
+      select: { id: true, name: true, isMain: true, ownerName: true, owner: { select: { name: true } } },
       orderBy: [{ isMain: 'desc' }, { createdAt: 'asc' }],
     }),
     prisma.journalEntry.findMany({
@@ -55,7 +55,7 @@ export async function buildBootstrapPayload(req: Request) {
 
   return {
     dossiers: dossierRows.map(serializeDossier),
-    directory: directoryRows.map(d => ({ id: d.id, name: d.name, isMain: d.isMain, ownerName: d.owner?.name })),
+    directory: directoryRows.map(d => ({ id: d.id, name: d.name, isMain: d.isMain, ownerName: d.owner?.name ?? d.ownerName ?? undefined })),
     entries: entryRows.map(serializeEntry),
     notifications: notificationRows.map(serializeNotification),
     settingsByDossier: Object.fromEntries(settingsRows.map(r => [r.dossierId, serializePlatformSettings(r)])),

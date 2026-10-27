@@ -345,7 +345,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
     setIsAddDossierOpen(false);
     pushNotification(
       'Nouveau dossier créé',
-      `Le dossier "${created.name}" a été confié à ${created.ownerName}. Il peut se connecter avec son email et son mot de passe.`,
+      created.ownerName ? `Le dossier "${created.name}" a été confié à ${created.ownerName}.` : `Le dossier "${created.name}" a été créé.`,
       'success',
       'system',
       { actionLabel: 'Voir le portefeuille', actionPayload: { mode: 'expert', expertTab: 'portfolio' } }

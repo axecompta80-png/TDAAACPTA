@@ -1264,7 +1264,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   Vous êtes sur le point de supprimer le dossier <strong>"{dossierToDelete.name}"</strong> (RCCM: {dossierToDelete.rccm}).
                 </p>
                 <p className="text-[12px] text-[#7C709A] dark:text-[#8E7BB8]">
-                  Ce dossier compte actuellement {entries.filter(e => e.clientDossierId === dossierToDelete.id).length} écriture(s) associée(s). Le compte de son propriétaire{dossierToDelete.ownerName ? ` (${dossierToDelete.ownerName})` : ''} sera aussi supprimé.
+                  Ce dossier compte actuellement {entries.filter(e => e.clientDossierId === dossierToDelete.id).length} écriture(s) associée(s).
                 </p>
               </div>
             </div>

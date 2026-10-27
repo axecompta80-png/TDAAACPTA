@@ -126,6 +126,7 @@ model ClientDossier {
   organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   isMain              Boolean      @default(false)
   owner               User?        @relation("DossierOwner")
+  ownerName           String?
   name                String
   managerName         String
   phone               String

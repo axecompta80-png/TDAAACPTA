@@ -12,11 +12,10 @@ const field = 'w-full px-3 py-2.5 rounded-lg border border-[#DDD6FE] dark:border
 const label = 'text-xs font-bold text-[#534674] dark:text-[#C4B5FD] mb-1 block';
 
 /**
- * « Ajouter un Dossier » (compte principal) : nom du dossier + compte de son propriétaire.
- * Le propriétaire se connecte avec cet email et ce mot de passe et n'accède qu'à ce dossier.
+ * « Ajouter un Dossier » (compte principal) : nom du dossier + nom du propriétaire (facultatif).
  */
 export const AddDossierModal: React.FC<AddDossierModalProps> = ({ onClose, onCreated }) => {
-  const [form, setForm] = useState({ name: '', ownerName: '', email: '', password: '' });
+  const [form, setForm] = useState({ name: '', ownerName: '' });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const set = (patch: Partial<typeof form>) => setForm(prev => ({ ...prev, ...patch }));
@@ -24,7 +23,6 @@ export const AddDossierModal: React.FC<AddDossierModalProps> = ({ onClose, onCre
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (form.password.length < 8) return setError('Le mot de passe doit contenir au moins 8 caractères.');
     setBusy(true);
     try {
       onCreated(await api.createDossier(form));
@@ -51,8 +49,7 @@ export const AddDossierModal: React.FC<AddDossierModalProps> = ({ onClose, onCre
           </button>
         </div>
         <p className="text-xs text-[#7C709A] dark:text-[#A594C9]">
-          Ce dossier a sa propre comptabilité. Son propriétaire se connecte avec l'email et le mot de passe ci-dessous
-          et n'a accès qu'à ce dossier. Les informations fiscales et les paramètres de l'entreprise y sont recopiés.
+          Ce dossier a sa propre comptabilité. Les informations fiscales et les paramètres de l'entreprise y sont recopiés.
         </p>
 
         <div>
@@ -60,16 +57,8 @@ export const AddDossierModal: React.FC<AddDossierModalProps> = ({ onClose, onCre
           <input required className={field} value={form.name} onChange={e => set({ name: e.target.value })} placeholder="ex : Boutique Plateau" />
         </div>
         <div>
-          <label className={label}>Nom du propriétaire *</label>
-          <input required className={field} value={form.ownerName} onChange={e => set({ ownerName: e.target.value })} placeholder="ex : Awa Koné" />
-        </div>
-        <div>
-          <label className={label}>Email du propriétaire *</label>
-          <input required type="email" autoComplete="off" className={field} value={form.email} onChange={e => set({ email: e.target.value })} />
-        </div>
-        <div>
-          <label className={label}>Mot de passe *</label>
-          <input required type="password" minLength={8} autoComplete="new-password" className={field} value={form.password} onChange={e => set({ password: e.target.value })} placeholder="8 caractères minimum" />
+          <label className={label}>Nom du propriétaire (facultatif)</label>
+          <input className={field} value={form.ownerName} onChange={e => set({ ownerName: e.target.value })} placeholder="ex : Awa Koné" />
         </div>
 
         {error && <div className="text-xs font-bold text-red-600 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-lg px-3 py-2">{error}</div>}
