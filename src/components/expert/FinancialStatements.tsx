@@ -89,7 +89,7 @@ export const FinancialStatements: React.FC<FinancialStatementsProps> = ({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 print-area">
       {/* Header with Switcher & Actions */}
       <div className="bg-white border border-[#DDD6FE] p-5 rounded-2xl shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>

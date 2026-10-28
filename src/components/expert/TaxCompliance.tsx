@@ -55,7 +55,7 @@ export const TaxCompliance: React.FC<TaxComplianceProps> = ({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 print-area">
       {/* Top Banner */}
       <div className="bg-white border border-[#DDD6FE] p-5 rounded-2xl shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>

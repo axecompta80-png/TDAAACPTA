@@ -548,10 +548,12 @@ const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&a
 /** Facture imprimable avec les mentions obligatoires (émetteur, RCCM / IFU, numéro, dates, HT / TVA / TTC, conditions). */
 export function printInvoice(inv: Invoice, d: ClientDossier) {
   const w = window.open('', '_blank', 'width=820,height=1000');
-  if (!w) return;
+  if (!w) { alert("Le navigateur a bloqué la fenêtre d'impression : autorisez les fenêtres pop-up pour ce site."); return; }
+  const frDate = (iso: string) => iso ? iso.split('-').reverse().join('/') : '';
   const rows = inv.lines.map(l => `<tr><td>${esc(l.description)}</td><td class="n">${fmt(l.quantity)}</td><td class="n">${fmt(l.unitPrice)}</td><td class="n">${fmt(l.amountHT)}</td></tr>`).join('');
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(inv.number)}</title><style>
-    body{font-family:Arial,sans-serif;color:#1E084A;margin:40px;font-size:13px}
+    @page{margin:0}/* pas d'URL ni de date ajoutées par le navigateur */
+    body{font-family:Arial,sans-serif;color:#1E084A;margin:15mm;font-size:13px;print-color-adjust:exact;-webkit-print-color-adjust:exact}
     h1{font-size:22px;margin:0}.top{display:flex;justify-content:space-between;gap:24px;margin-bottom:28px}
     table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left}
     th{background:#1E084A;color:#fff}.n{text-align:right}.tot td{border:none}.tot .b{font-weight:bold;font-size:15px}
@@ -559,8 +561,8 @@ export function printInvoice(inv: Invoice, d: ClientDossier) {
   </style></head><body>
     <div class="top">
       <div><h1>${esc(d.name)}</h1><div class="muted">${esc(d.activity)}<br>${esc(d.city)}, ${esc(d.country)} • Tél. ${esc(d.phone)}<br>RCCM : ${esc(d.rccm)} • IFU : ${esc(d.ifu)}<br>Régime : ${esc(d.regimeFiscal)}</div></div>
-      <div style="text-align:right"><h1>FACTURE</h1><div>N° <b>${esc(inv.number)}</b></div><div>Date : ${esc(inv.date)}</div>
-        <div>Échéance : ${esc(inv.dueDate)}</div><div>${inv.mode === 'cash' ? 'Au comptant' : 'À crédit'}</div>
+      <div style="text-align:right"><h1>FACTURE</h1><div>N° <b>${esc(inv.number)}</b></div><div>Date : ${esc(frDate(inv.date))}</div>
+        <div>Échéance : ${esc(frDate(inv.dueDate))}</div><div>${inv.mode === 'cash' ? 'Au comptant' : 'À crédit'}</div>
         ${inv.status !== 'validated' ? `<div class="stamp">${inv.status === 'cancelled' ? 'ANNULÉE' : 'PROFORMA — non validée'}</div>` : ''}</div>
     </div>
     <div><b>Facturé à :</b> ${esc(inv.customerName)}<br><span class="muted">${[inv.customerAddress, inv.customerPhone, inv.customerEmail, inv.customerTaxId && `IFU : ${inv.customerTaxId}`].filter(Boolean).map(esc).join(' • ')}</span></div>

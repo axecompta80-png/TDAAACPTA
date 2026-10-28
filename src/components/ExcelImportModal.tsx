@@ -436,7 +436,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".xlsx, .xls, .ods, .csv"
+                  accept=".xlsx, .xlsm, .xlsb, .xls, .ods, .csv, .tsv, .txt"
                   className="hidden"
                   onChange={(e) => {
                     if (e.target.files && e.target.files[0]) {

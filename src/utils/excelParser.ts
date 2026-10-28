@@ -301,7 +301,7 @@ const HEADER_HINT = /date|libell|montant|debit|credit|designation|description|op
  * La ligne d'en-tête est cherchée sous d'éventuelles lignes de titre (relevés bancaires).
  */
 export function parseExcelBuffer(buffer: ArrayBuffer, fileName = ''): { sheetNames: string[]; rowsBySheet: Record<string, any[]> } {
-  const workbook = /\.(csv|txt)$/i.test(fileName)
+  const workbook = /\.(csv|tsv|txt)$/i.test(fileName)
     // raw : le CSV reste en texte, dates jj/mm et montants « 1 234,50 » sont lus par parseCellDate / parseCellAmount.
     ? XLSX.read(decodeText(buffer), { type: 'string', raw: true })
     : XLSX.read(buffer, { type: 'array', cellDates: true });

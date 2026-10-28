@@ -39,7 +39,7 @@ export const CreditReadyReport: React.FC<CreditReadyReportProps> = ({
 
   return (
     <div className="fixed inset-0 bg-[#1E084A]/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white border border-[#DDD6FE] w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden my-6">
+      <div className="bg-white border border-[#DDD6FE] w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden my-6 print-area">
         {/* Header Bar */}
         <div className="bg-[#1E084A] text-white px-6 py-4 flex items-center justify-between border-b border-[#3B1578]">
           <div className="flex items-center gap-3">

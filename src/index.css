@@ -173,3 +173,39 @@
 .dark ::-webkit-scrollbar-thumb:hover {
   background: #8B5CF6;
 }
+
+/* Impression (« Imprimer l'état ») : seule la zone .print-area sort, sans boutons ni champs. */
+@media print {
+  body *:not(:has(.print-area)):not(.print-area):not(.print-area *),
+  .print-area button,
+  .print-area input,
+  .print-area select,
+  .print-area .no-print {
+    display: none !important;
+  }
+  /* Conteneurs autour de la zone (fenêtre modale, mise en page) : neutres, pour ne pas couper le contenu. */
+  body, *:has(.print-area) {
+    display: block !important;
+    position: static !important;
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+  .print-area {
+    max-width: none !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    /* garde les bandeaux colorés, sinon leur texte blanc disparaît sur papier */
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  .print-area * { box-shadow: none !important; }
+  @page { margin: 12mm; }
+}
