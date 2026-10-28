@@ -35,8 +35,24 @@ export interface ColumnMapping {
   tvaCol?: string;
 }
 
-// Intelligent detection of column names from headers
-export function detectColumns(headers: string[]): ColumnMapping {
+const AMOUNT_TEXT = /^[\s\d.,()+-]+(f|fcfa|cfa|xof|€|eur)?\s*$/i;
+const isAmountCell = (v: unknown) => typeof v === 'number' || (typeof v === 'string' && /\d/.test(v) && AMOUNT_TEXT.test(v));
+const isDateCell = (v: unknown) => v instanceof Date || (typeof v === 'string' && parseCellDate(v) !== null);
+
+/** Colonne dont la majorité des cellules remplies vérifient `test` (titre non reconnu, on regarde le contenu). */
+function columnByContent(headers: string[], rows: Record<string, any>[], test: (v: unknown) => boolean, exclude: string[]): string {
+  let best = '', bestScore = 0.5;
+  for (const h of headers) {
+    if (exclude.includes(h)) continue;
+    const filled = rows.slice(0, 50).map(r => r[h]).filter(v => String(v ?? '').trim() !== '');
+    const score = filled.length ? filled.filter(test).length / filled.length : 0;
+    if (score > bestScore) { best = h; bestScore = score; }
+  }
+  return best;
+}
+
+// Intelligent detection of column names from headers (titres français ou anglais), puis du contenu si besoin
+export function detectColumns(headers: string[], rows: Record<string, any>[] = []): ColumnMapping {
   const norm = (s: string) => s.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
   let dateCol = '';
@@ -52,7 +68,7 @@ export function detectColumns(headers: string[]): ColumnMapping {
 
   headers.forEach(h => {
     const n = norm(h);
-    if (!dateCol && (n.includes('date') || n === 'jour' || n === 'periode')) {
+    if (!dateCol && (n.includes('date') || n.includes('time') || n === 'jour' || n === 'periode')) {
       dateCol = h;
     } else if (!tvaCol && (/\btva\b/.test(n) || n.includes('taxe'))) {
       tvaCol = h;
@@ -60,20 +76,27 @@ export function detectColumns(headers: string[]): ColumnMapping {
       debitAccountCol = h;
     } else if (!creditAccountCol && (n.includes('compte c') || n.includes('credit compte') || n.includes('code c') || n === 'cpt credit' || n === 'compte_credit')) {
       creditAccountCol = h;
-    } else if (!debitCol && (n.startsWith('debit') || n.includes('depense') || n.startsWith('retrait') || n.startsWith('sortie') || n.includes('montant debit'))) {
+    } else if (!debitCol && (n.startsWith('debit') || n.includes('depense') || n.startsWith('withdraw') || n.startsWith('paid out') || n.startsWith('retrait') || n.startsWith('sortie') || n.includes('montant debit'))) {
       debitCol = h;
-    } else if (!creditCol && (n.startsWith('credit') || n.includes('recette') || n.startsWith('depot') || n.startsWith('entree') || n.includes('montant credit'))) {
+    } else if (!creditCol && (n.startsWith('credit') || n.includes('recette') || n.startsWith('deposit') || n.startsWith('paid in') || n.startsWith('depot') || n.startsWith('entree') || n.includes('montant credit'))) {
       creditCol = h;
-    } else if ((!amountCol || n.includes('ttc')) && (n.includes('montant') || n.includes('total') || n === 'prix' || n.includes('ttc') || n === 'valeur' || n === 'somme')) {
+    } else if ((!amountCol || n.includes('ttc')) && (n.includes('montant') || n.includes('amount') || n.includes('total') || n === 'prix' || n.includes('ttc') || n === 'valeur' || n === 'somme')) {
       amountCol = h; // TTC prioritaire sur un « Montant HT » vu avant
-    } else if (!pieceRefCol && (n.includes('piece') || n.includes('ref') || n.includes('facture') || n.includes('num') || n.includes('n°') || n.includes('recu'))) {
+    } else if (!pieceRefCol && (n.includes('piece') || n.includes('ref') || n.includes('facture') || n.includes('num') || n.includes('n°') || n.includes('recu') || /\bid\b/.test(n))) {
       pieceRefCol = h;
     } else if (!paymentMethodCol && (n.includes('reglement') || n.includes('paiement') || n.includes('moyen') || n.includes('canal') || n.includes('mode'))) {
       paymentMethodCol = h;
-    } else if (!labelCol && (n.includes('libelle') || n.includes('designation') || n.includes('description') || n.includes('motif') || n.includes('operation') || n.includes('transaction') || n.includes('detail') || n.includes('tiers') || n.includes('nom'))) {
+    } else if (!labelCol && (n.includes('libelle') || n.includes('designation') || n.includes('description') || n.includes('motif') || n.includes('operation') || n.includes('transaction') || n.includes('detail') || n.includes('tiers') || n.includes('nom') || n.includes('label') || n.includes('counterpart') || n.includes('memo') || n.includes('narration') || n.includes('beneficiaire') || n.includes('name'))) {
       labelCol = h;
     }
   });
+
+  // Titres non reconnus : on choisit d'après le contenu (dates lisibles, montants lisibles).
+  if (rows.length) {
+    if (!dateCol) dateCol = columnByContent(headers, rows, isDateCell, []);
+    if (!amountCol && !debitCol && !creditCol) amountCol = columnByContent(headers, rows, isAmountCell, [dateCol, pieceRefCol]);
+    if (!labelCol) labelCol = columnByContent(headers, rows, v => typeof v === 'string' && !isAmountCell(v) && !isDateCell(v), [dateCol, pieceRefCol, paymentMethodCol]);
+  }
 
   // Fallbacks if not detected
   if (!labelCol && headers.length > 0) {
@@ -81,7 +104,7 @@ export function detectColumns(headers: string[]): ColumnMapping {
     if (candidates.length > 0) labelCol = candidates[0];
   }
 
-  if (!amountCol && !debitCol && !creditCol && headers.length > 1) {
+  if (!amountCol && !debitCol && !creditCol && headers.length > 1 && !rows.length) {
     amountCol = headers[1];
   }
 

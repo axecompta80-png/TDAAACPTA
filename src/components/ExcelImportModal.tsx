@@ -58,6 +58,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   const [importAsValidated, setImportAsValidated] = useState<boolean>(true);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [searchFilter, setSearchFilter] = useState<string>('');
+  const [formatError, setFormatError] = useState<string>('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -66,6 +67,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   // Handle file upload
   const processFile = async (file: File) => {
     setIsProcessing(true);
+    setFormatError('');
     setFileName(file.name);
     setFileSize((file.size / 1024).toFixed(1) + ' Ko');
 
@@ -74,8 +76,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       const { sheetNames, rowsBySheet } = parseExcelBuffer(buffer, file.name);
 
       if (sheetNames.length === 0 || !rowsBySheet[sheetNames[0]] || rowsBySheet[sheetNames[0]].length === 0) {
-        alert("Le fichier Excel est vide ou ne contient aucune ligne exploitable.");
-        setIsProcessing(false);
+        setFormatError("Le fichier est vide ou ne contient aucune ligne exploitable.");
         return;
       }
 
@@ -88,15 +89,18 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       const detectedHeaders = Object.keys(firstRow);
       setHeaders(detectedHeaders);
 
-      const initialMapping = detectColumns(detectedHeaders);
+      const initialMapping = detectColumns(detectedHeaders, rowsBySheet[firstSheet]);
       setColumnMapping(initialMapping);
 
-      // Generate preview rows
-      buildPreview(rowsBySheet[firstSheet], initialMapping);
+      // Aucune ligne importable (pas de date, libellé ou montant lisible) : on reste sur l'envoi et on oriente vers les modèles.
+      if (!buildPreview(rowsBySheet[firstSheet], initialMapping).some(r => r.selected)) {
+        setFormatError("Les données de ce fichier ne correspondent pas au format attendu : aucune ligne avec une date, un libellé et un montant lisibles. Utilisez un des modèles ci-dessous (colonnes Date, Libellé, Montant).");
+        return;
+      }
       setStep('preview');
     } catch (err) {
       console.error("Erreur lors de la lecture du fichier Excel:", err);
-      alert("Impossible de lire ce document Excel. Vérifiez que le fichier est valide (.xlsx, .xls ou .csv).");
+      setFormatError("Impossible de lire ce document. Vérifiez que le fichier est valide (.xlsx, .xls, .ods ou .csv) ou partez d'un des modèles ci-dessous.");
     } finally {
       setIsProcessing(false);
     }
@@ -172,6 +176,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     });
 
     setParsedRows(previews);
+    return previews;
   };
 
   // Switch sheet
@@ -181,7 +186,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     if (rows.length > 0) {
       const newHeaders = Object.keys(rows[0]);
       setHeaders(newHeaders);
-      const newMapping = detectColumns(newHeaders);
+      const newMapping = detectColumns(newHeaders, rows);
       setColumnMapping(newMapping);
       buildPreview(rows, newMapping);
     }
@@ -321,7 +326,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                   Importation de Fichiers Excel & Tableurs
                 </h3>
                 <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-[#10B981]/20 text-[#34D399] border border-[#10B981]/30">
-                  .xlsx, .xls, .csv
+                  .xlsx, .xls, .ods, .csv
                 </span>
               </div>
               <p className="text-xs text-[#C4B5FD]">
@@ -419,7 +424,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                   Glissez-déposez votre document Excel ici
                 </h4>
                 <p className="text-xs text-[#7C709A] max-w-md mb-4">
-                  Formats acceptés : <strong>.XLSX, .XLS, .CSV</strong> (tableaux de ventes, relevés bancaires, extraits Wave / Orange Money / MTN MoMo, journaux d'achats)
+                  Formats acceptés : <strong>.XLSX, .XLS, .ODS, .CSV</strong> (tableaux de ventes, relevés bancaires, extraits Wave / Orange Money / MTN MoMo, journaux d'achats)
                 </p>
                 <button
                   type="button"
@@ -431,15 +436,23 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".xlsx, .xls, .csv"
+                  accept=".xlsx, .xls, .ods, .csv"
                   className="hidden"
                   onChange={(e) => {
                     if (e.target.files && e.target.files[0]) {
                       processFile(e.target.files[0]);
                     }
+                    e.target.value = ''; // permet de renvoyer le même fichier après correction
                   }}
                 />
               </div>
+
+              {formatError && (
+                <div role="alert" className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl text-xs">
+                  <strong className="block mb-0.5">{fileName ? `« ${fileName} » non importé` : 'Fichier non importé'}</strong>
+                  {formatError}
+                </div>
+              )}
 
               {/* Download Official Blank Templates */}
               <div className="bg-[#FAF8FF] border border-[#DDD6FE] p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
@@ -731,7 +744,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                           </td>
 
                           <td className="p-3 font-mono text-[#534674] whitespace-nowrap">
-                            {row.date}
+                            {row.date ? row.date.split('-').reverse().join('/') : '—'}
                           </td>
 
                           <td className="p-3 font-mono font-bold text-[#7024E3] whitespace-nowrap">

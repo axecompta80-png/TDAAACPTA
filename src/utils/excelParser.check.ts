@@ -58,4 +58,13 @@ assert.equal(rm.pieceRefCol, 'Référence');
 assert.equal(detectColumns(['Date', 'Libellé', 'Débit (Dépenses)', 'Crédit (Recettes)']).debitCol, 'Débit (Dépenses)');
 assert.equal(detectColumns(['Date', 'Libellé', 'Débit', 'Crédit']).creditCol, 'Crédit');
 
+// Titres anglais et export Mobile Money : reconnus par le nom ou, à défaut, par le contenu.
+const en = detectColumns(['Date', 'Description', 'Amount']);
+assert.equal(en.amountCol, 'Amount');
+assert.equal(en.labelCol, 'Description');
+const wave = detectColumns(['Transaction ID', 'Timestamp', 'Amount', 'Counterparty']);
+assert.deepEqual([wave.dateCol, wave.amountCol, wave.labelCol, wave.pieceRefCol], ['Timestamp', 'Amount', 'Counterparty', 'Transaction ID']);
+const odd = detectColumns(['Col1', 'Col2', 'Col3'], [{ Col1: 'Achat riz', Col2: '15/09/2026', Col3: '25 000 FCFA' }]);
+assert.deepEqual([odd.dateCol, odd.amountCol, odd.labelCol], ['Col2', 'Col3', 'Col1']);
+
 console.log('excelParser : OK');

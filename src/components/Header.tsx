@@ -211,7 +211,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={onOpenExcelImport}
               className="flex items-center gap-1.5 px-3 py-2.5 bg-gradient-to-r from-[#10B981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white rounded-xl text-xs font-bold transition-all shadow-2xs hover:shadow-xs"
-              title="Importer un document Excel (.xlsx, .xls, .csv)"
+              title="Importer un document Excel (.xlsx, .xls, .ods, .csv)"
             >
               <FileSpreadsheet className="w-4 h-4 text-white shrink-0" />
               <span className="hidden md:inline">Importer Excel</span>
