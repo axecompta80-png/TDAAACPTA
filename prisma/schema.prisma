@@ -194,7 +194,6 @@ model JournalEntry {
   clientDossierId       String
   clientDossier         ClientDossier     @relation(fields: [clientDossierId], references: [id], onDelete: Cascade)
   status                TransactionStatus @default(pending_review)
-  confidenceScore       Int
   detectedAnomaly       String?
   rawInput              String
   inputType             InputMode
@@ -225,7 +224,6 @@ model AuditLog {
   author          String
   notes           String?
   previousValue   String?
-  confidenceScore Int?
 
   @@index([journalEntryId])
   @@map("audit_logs")

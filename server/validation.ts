@@ -102,7 +102,7 @@ export function validateDossierInput(body: unknown): Result<DossierInput> {
 
 export interface AuditLogInput {
   id: string; timestamp: string; action: string; author: string;
-  notes?: string; previousValue?: string; confidenceScore?: number;
+  notes?: string; previousValue?: string;
 }
 
 export interface EntryInput {
@@ -115,7 +115,6 @@ export interface EntryInput {
   amount: number;
   tvaAmount: number;
   status: string;
-  confidenceScore: number;
   detectedAnomaly?: string;
   rawInput: string;
   inputType: string;
@@ -134,7 +133,6 @@ function parseAuditTrail(value: unknown, trusted = false): AuditLogInput[] {
     const author = optionalText(a.author, 120) ?? 'Agent AxeCompta';
     const notes = optionalText(a.notes) ?? undefined;
     const previousValue = optionalText(a.previousValue) ?? undefined;
-    const score = Number(a.confidenceScore);
     rows.push({
       id: identifier(a.id) ?? `aud-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       timestamp: isoDate(a.timestamp) && typeof a.timestamp === 'string' ? new Date(a.timestamp).toISOString() : new Date().toISOString(),
@@ -142,7 +140,6 @@ function parseAuditTrail(value: unknown, trusted = false): AuditLogInput[] {
       author,
       notes,
       previousValue,
-      confidenceScore: Number.isFinite(score) ? Math.min(100, Math.max(0, Math.round(score))) : undefined,
     });
   }
   return rows;
@@ -168,8 +165,6 @@ export function validateEntryInput(body: unknown, options: { requireId?: boolean
   const explanationSimplified = optionalText(b.explanationSimplified) ?? '';
   const rawInput = optionalText(b.rawInput) ?? '';
   const detectedAnomaly = optionalText(b.detectedAnomaly) ?? undefined;
-  const rawScore = Number(b.confidenceScore);
-  const confidenceScore = Number.isFinite(rawScore) ? Math.min(100, Math.max(0, Math.round(rawScore))) : 0;
   const id = options.requireId ? identifier(b.id) : undefined;
 
   if (options.requireId && !id) return { ok: false, error: 'Identifiant d\'écriture invalide.' };
@@ -188,7 +183,7 @@ export function validateEntryInput(body: unknown, options: { requireId?: boolean
     ok: true,
     data: {
       id: id ?? undefined, date, label, pieceRef, debitAccountCode, creditAccountCode,
-      amount, tvaAmount, status, confidenceScore, detectedAnomaly, rawInput, inputType,
+      amount, tvaAmount, status, detectedAnomaly, rawInput, inputType,
       explanationSimplified, paymentMethod, auditTrail: parseAuditTrail(b.auditTrail, options.trusted),
     },
   };

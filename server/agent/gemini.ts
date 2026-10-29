@@ -72,11 +72,10 @@ RÈGLES POUR LES OPÉRATIONS :
 - "settlement" : "paid" (réglé), "credit" (pas encore payé) ou "partial" (acompte : renseigne paidAmount).
 - "amount" = montant TOTAL TTC en FCFA (entier). Quantité × prix unitaire si besoin ("3 sacs à 5000F" = 15000). "45k" = 45000.
 - "vatApplicable" : true seulement pour ventes/achats/dépenses soumis à TVA ; false pour salaires, prêts, transferts, frais bancaires, retraits. Si un document indique la TVA, renseigne "vatAmount".
-- "confidence" (0-100) : > 90 si tout est précis ; < 80 si ambigu ou sans pièce ; 50 pour un retrait sans motif.
-- "anomaly" : chaîne non vide UNIQUEMENT pour une vraie anomalie (retrait sans justificatif, mélange personnel/professionnel, montant incohérent, doublon évident). Une simple incertitude se traduit par une "confidence" basse, jamais par "anomaly".
+- "anomaly" : chaîne non vide UNIQUEMENT pour une vraie anomalie (retrait sans justificatif, mélange personnel/professionnel, montant incohérent, doublon évident). Une simple incertitude n'est jamais une "anomaly".
 - "sourceSnippet" : le morceau exact du message d'où vient cette opération.
 - "label" : libellé comptable court. "date" au format AAAA-MM-JJ si l'utilisateur ou le document précise une date (hier, avant-hier, date sur le reçu), sinon vide.
-- SMS Mobile Money : reconnais l'opérateur, le montant, les frais (opération bank_fee séparée), l'identifiant de transaction ("pieceRef"). Un SMS « vous avez reçu » = encaissement à confirmer (confidence ≤ 82).
+- SMS Mobile Money : reconnais l'opérateur, le montant, les frais (opération bank_fee séparée), l'identifiant de transaction ("pieceRef"). Un SMS « vous avez reçu » = encaissement à confirmer.
 ${hasDocument ? '- Un document est joint (facture, reçu, relevé, PDF) : extrais fournisseur/client (counterparty), date, numéro (pieceRef), montant TTC, TVA (vatAmount), mode de paiement lu sur la pièce. Si le document est illisible, intent = "clarification".\n' : ''}
 DONNÉES DU DOSSIER (calculées sur les écritures réelles) :
 ${JSON.stringify(analytics)}
@@ -98,13 +97,12 @@ const operationSchema = {
     vatAmount: { type: Type.NUMBER },
     counterparty: { type: Type.STRING },
     label: { type: Type.STRING },
-    confidence: { type: Type.INTEGER },
     anomaly: { type: Type.STRING },
     date: { type: Type.STRING },
     pieceRef: { type: Type.STRING },
     sourceSnippet: { type: Type.STRING },
   },
-  required: ['kind', 'amount', 'paymentMethod', 'settlement', 'label', 'confidence', 'sourceSnippet'],
+  required: ['kind', 'amount', 'paymentMethod', 'settlement', 'label', 'sourceSnippet'],
 };
 
 const responseSchema = {
@@ -165,7 +163,6 @@ function reconcileOperations(raw: any[], fullText: string, now: Date): ParsedOpe
       vatAmount: Number(r.vatAmount) > 0 ? Math.round(Number(r.vatAmount)) : undefined,
       counterparty: r.counterparty || undefined,
       label: String(r.label || 'Opération').slice(0, 140),
-      confidence: Math.max(0, Math.min(100, Math.round(Number(r.confidence) || 80))),
       anomaly: r.anomaly ? String(r.anomaly) : undefined,
       date: /^\d{4}-\d{2}-\d{2}$/.test(r.date ?? '') ? r.date : undefined,
       pieceRef: r.pieceRef || undefined,

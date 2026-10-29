@@ -95,11 +95,6 @@ export const AuditTrailModal: React.FC<AuditTrailModalProps> = ({
 
                       <div className="font-semibold text-[#1E084A] flex items-center gap-1.5 pt-0.5">
                         <span>Auteur : {item.author}</span>
-                        {item.confidenceScore && (
-                          <span className="text-[11px] font-mono text-[#7C709A]">
-                            (Confiance IA : {item.confidenceScore}%)
-                          </span>
-                        )}
                       </div>
 
                       {item.notes && (

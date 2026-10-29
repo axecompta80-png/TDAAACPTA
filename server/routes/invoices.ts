@@ -149,7 +149,6 @@ router.post('/invoices/:id/validate', handler(async (req, res) => {
     tvaAmount: 0, // la TVA est portée par sa propre écriture sur le 4431
     clientDossierId: inv.clientDossierId,
     status: 'validated' as const,
-    confidenceScore: 100,
     rawInput: `Facture ${inv.number}`,
     inputType: 'manual' as const,
     paymentMethod: (inv.paymentMethod ?? 'bank_transfer') as any,
@@ -252,7 +251,7 @@ router.post('/invoices/:id/payments', handler(async (req, res) => {
         debitAccountCode: treasury, creditAccountCode: inv.customerAccountCode,
         amount, tvaAmount: 0, clientDossierId: inv.clientDossierId,
         status: 'validated', validatedById: user.sub, validatedAt: new Date(),
-        confidenceScore: 100, rawInput: label, inputType: 'manual', paymentMethod: method as any,
+        rawInput: label, inputType: 'manual', paymentMethod: method as any,
         explanationSimplified: `${label} : ${amount.toLocaleString('fr-FR')} encaissés.`,
         createdById: user.sub,
         auditTrail: { create: { action: 'edited_by_expert', author, notes: `Règlement saisi et lettré sur ${inv.number}.` } },

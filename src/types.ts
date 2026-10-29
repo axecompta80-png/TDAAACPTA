@@ -19,7 +19,6 @@ export interface AuditLog {
   author: string;
   notes?: string;
   previousValue?: string;
-  confidenceScore?: number;
 }
 
 export interface JournalEntry {
@@ -35,7 +34,6 @@ export interface JournalEntry {
   tvaAmount: number; // Montant TVA en FCFA
   clientDossierId: string;
   status: TransactionStatus;
-  confidenceScore: number; // 0 - 100
   detectedAnomaly?: string;
   rawInput: string;
   inputType: InputMode;

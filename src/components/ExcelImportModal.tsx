@@ -169,7 +169,6 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         creditAccountLabel: classification.creditLabel,
         paymentMethod: classification.paymentMethod,
         tvaAmount,
-        confidenceScore: classification.confidence,
         anomaly: blocking ?? classification.anomaly,
         originalRaw: row
       });
@@ -274,7 +273,6 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         tvaAmount: r.tvaAmount,
         clientDossierId: targetDossierId,
         status,
-        confidenceScore: r.confidenceScore,
         detectedAnomaly: r.anomaly,
         rawInput: `Import Excel: ${fileName} [Ligne ${r.rowIndex}]`,
         inputType: 'excel_import',
@@ -286,8 +284,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             timestamp: new Date().toISOString(),
             action: 'created_by_ai',
             author: 'Module Import Excel AxeCompta',
-            notes: `Importé depuis ${fileName}. Détection SYSCOHADA confiance ${r.confidenceScore}%.`,
-            confidenceScore: r.confidenceScore
+            notes: `Importé depuis ${fileName}.`
           }
         ]
       };
@@ -725,7 +722,6 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                         <th className="p-3 min-w-[170px]">Compte Débit (SYSCOHADA)</th>
                         <th className="p-3 min-w-[170px]">Compte Crédit (SYSCOHADA)</th>
                         <th className="p-3 text-right w-28">Montant (FCFA)</th>
-                        <th className="p-3 text-center w-24">Confiance IA</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#EDE9FE]">
@@ -793,16 +789,6 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
                           <td className="p-3 text-right font-tabular font-black text-[#1E084A] whitespace-nowrap">
                             {row.amount.toLocaleString('fr-FR')}
-                          </td>
-
-                          <td className="p-3 text-center">
-                            <span className={`px-2 py-0.5 rounded-full text-[11px] font-mono font-bold ${
-                              row.confidenceScore >= 90 
-                                ? 'bg-[#D1FAE5] text-[#065F46]' 
-                                : 'bg-[#FEF3C7] text-[#92400E]'
-                            }`}>
-                              {row.confidenceScore}%
-                            </span>
                           </td>
                         </tr>
                       ))}

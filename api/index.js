@@ -60,8 +60,7 @@ function serializeAuditLog(row) {
     action: row.action,
     author: row.author,
     notes: row.notes ?? void 0,
-    previousValue: row.previousValue ?? void 0,
-    confidenceScore: row.confidenceScore ?? void 0
+    previousValue: row.previousValue ?? void 0
   };
 }
 function serializeEntry(row) {
@@ -78,7 +77,6 @@ function serializeEntry(row) {
     tvaAmount: Number(row.tvaAmount),
     clientDossierId: row.clientDossierId,
     status: row.status,
-    confidenceScore: row.confidenceScore,
     detectedAnomaly: row.detectedAnomaly ?? void 0,
     rawInput: row.rawInput,
     inputType: row.inputType,
@@ -605,15 +603,13 @@ function parseAuditTrail(value, trusted = false) {
     const author = optionalText(a.author, 120) ?? "Agent AxeCompta";
     const notes = optionalText(a.notes) ?? void 0;
     const previousValue = optionalText(a.previousValue) ?? void 0;
-    const score = Number(a.confidenceScore);
     rows.push({
       id: identifier(a.id) ?? `aud-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       timestamp: isoDate(a.timestamp) && typeof a.timestamp === "string" ? new Date(a.timestamp).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
       action: action ?? "created_by_ai",
       author,
       notes,
-      previousValue,
-      confidenceScore: Number.isFinite(score) ? Math.min(100, Math.max(0, Math.round(score))) : void 0
+      previousValue
     });
   }
   return rows;
@@ -633,8 +629,6 @@ function validateEntryInput(body, options = {}) {
   const explanationSimplified = optionalText(b.explanationSimplified) ?? "";
   const rawInput = optionalText(b.rawInput) ?? "";
   const detectedAnomaly = optionalText(b.detectedAnomaly) ?? void 0;
-  const rawScore = Number(b.confidenceScore);
-  const confidenceScore = Number.isFinite(rawScore) ? Math.min(100, Math.max(0, Math.round(rawScore))) : 0;
   const id = options.requireId ? identifier(b.id) : void 0;
   if (options.requireId && !id) return { ok: false, error: "Identifiant d'\xE9criture invalide." };
   if (!date) return { ok: false, error: "Date d'\xE9criture invalide." };
@@ -659,7 +653,6 @@ function validateEntryInput(body, options = {}) {
       amount,
       tvaAmount,
       status,
-      confidenceScore,
       detectedAnomaly,
       rawInput,
       inputType,
@@ -941,7 +934,6 @@ function entryCreateData(e, dossier, createdById, author) {
     tvaAmount: e.tvaAmount,
     clientDossierId: dossierId,
     status: e.status,
-    confidenceScore: e.confidenceScore,
     detectedAnomaly: e.detectedAnomaly,
     rawInput: e.rawInput,
     inputType: e.inputType,
@@ -956,8 +948,7 @@ function entryCreateData(e, dossier, createdById, author) {
         action: a.action,
         author: a.author,
         notes: a.notes,
-        previousValue: a.previousValue,
-        confidenceScore: a.confidenceScore
+        previousValue: a.previousValue
       })), ...auto ? [autoValidationData(author, createdById).auditTrail.create] : []]
     }
   };
@@ -1018,7 +1009,6 @@ router2.post("/entries/:id/update", handler(async (req, res) => {
       amount: e.amount,
       tvaAmount: e.tvaAmount,
       status: e.status,
-      confidenceScore: e.confidenceScore,
       detectedAnomaly: e.detectedAnomaly ?? null,
       rawInput: e.rawInput,
       inputType: e.inputType,
@@ -1038,8 +1028,7 @@ router2.post("/entries/:id/update", handler(async (req, res) => {
         action: a.action,
         author: a.author,
         notes: a.notes,
-        previousValue: a.previousValue,
-        confidenceScore: a.confidenceScore
+        previousValue: a.previousValue
       }
     });
   }
@@ -1283,7 +1272,6 @@ router5.post("/import-backup", handler(async (req, res) => {
       tvaAmount: e.tvaAmount,
       clientDossierId: dossierId,
       status: e.status,
-      confidenceScore: e.confidenceScore,
       detectedAnomaly: e.detectedAnomaly,
       rawInput: e.rawInput,
       inputType: e.inputType,
@@ -1303,8 +1291,7 @@ router5.post("/import-backup", handler(async (req, res) => {
         action: a.action,
         author: a.author,
         notes: a.notes,
-        previousValue: a.previousValue,
-        confidenceScore: a.confidenceScore
+        previousValue: a.previousValue
       });
     }
   });
@@ -1597,7 +1584,6 @@ router7.post("/invoices/:id/validate", handler(async (req, res) => {
     // la TVA est portée par sa propre écriture sur le 4431
     clientDossierId: inv.clientDossierId,
     status: "validated",
-    confidenceScore: 100,
     rawInput: `Facture ${inv.number}`,
     inputType: "manual",
     paymentMethod: inv.paymentMethod ?? "bank_transfer",
@@ -1689,7 +1675,6 @@ router7.post("/invoices/:id/payments", handler(async (req, res) => {
         status: "validated",
         validatedById: user.sub,
         validatedAt: /* @__PURE__ */ new Date(),
-        confidenceScore: 100,
         rawInput: label,
         inputType: "manual",
         paymentMethod: method,
@@ -2423,14 +2408,10 @@ function buildEntries(ops, { ctx, rawInput, inputType, source }) {
     const T = treasuryCode(method);
     let nature = isKnownAccount(op.natureAccountCode) ? op.natureAccountCode : void 0;
     let precedentNote;
-    let precedentBoost = 0;
     const precedent = findPrecedent(op, ctx);
     if (precedent && precedent.nature !== nature) {
       nature = precedent.nature;
       precedentNote = `Compte ${nature} repris de la correction de l'expert sur l'\xE9criture ${precedent.entry.pieceRef}.`;
-      precedentBoost = 6;
-    } else if (precedent) {
-      precedentBoost = 3;
     }
     const salesDefault = codeOf(settings.defaultCreditSalesAccount);
     const expenseFallback = "6581";
@@ -2502,7 +2483,6 @@ function buildEntries(ops, { ctx, rawInput, inputType, source }) {
       const natureCode = [line.debit, line.credit].find((c) => /^[2367]/.test(c) && !isTreasuryCode(c)) ?? "";
       const vatable = op.vatApplicable ?? (!noVatRegime && VAT_KINDS.includes(op.kind) && VATABLE_PREFIXES.some((p) => natureCode.startsWith(p)));
       const tvaAmount = op.vatAmount !== void 0 && lines.length === 1 ? Math.min(Math.max(0, Math.round(op.vatAmount)), line.amount) : vatable ? Math.round(line.amount * rate / (100 + rate)) : 0;
-      let confidence = op.confidence + precedentBoost - (assumed ? 5 : 0);
       let anomaly = op.anomaly;
       const cashSide = [line.debit, line.credit].some((c) => c === "5711" || c === "5721") && line.method === "cash";
       const flaggable = !["transfer", "opening_balance", "capital_contribution", "loan_received", "loan_repayment", "owner_withdrawal", "depreciation"].includes(op.kind);
@@ -2512,16 +2492,13 @@ function buildEntries(ops, { ctx, rawInput, inputType, source }) {
       }
       if (!anomaly && date > today) {
         anomaly = `Date post\xE9rieure \xE0 aujourd'hui (${date}) : v\xE9rifier la date de l'op\xE9ration.`;
-        confidence = Math.min(confidence, 70);
       }
       if (settings.duplicateDetection) {
         const dup = findDuplicate(line, op, date, ctx);
         if (dup) {
           anomaly = `Doublon possible avec l'\xE9criture ${dup.pieceRef} du ${dup.date} (m\xEAme montant, m\xEAmes comptes).`;
-          confidence = Math.min(confidence, 70);
         }
       }
-      confidence = Math.max(0, Math.min(99, Math.round(confidence)));
       const status = anomaly ? "anomaly" : "pending_review";
       const action = anomaly ? "anomaly_flagged" : "created_by_ai";
       const ref = op.pieceRef ?? `OP-${Math.floor(1e3 + Math.random() * 9e3)}`;
@@ -2539,7 +2516,6 @@ function buildEntries(ops, { ctx, rawInput, inputType, source }) {
         amount: line.amount,
         tvaAmount,
         status,
-        confidenceScore: confidence,
         detectedAnomaly: anomaly,
         rawInput,
         inputType,
@@ -2550,7 +2526,6 @@ function buildEntries(ops, { ctx, rawInput, inputType, source }) {
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           action,
           author: "Agent AxeCompta (IA Syscohada)",
-          confidenceScore: confidence,
           notes: [anomaly, precedentNote, `Attribu\xE9 via ${source}`].filter(Boolean).join(" \u2022 ")
         }]
       });
@@ -2648,18 +2623,17 @@ var RE = {
   service: /prestation|service|consult|reparation|coiffure|couture|formation|travaux|main d.?oeuvre|nettoyage|conseil|honoraires|location de|livraison facturee/,
   finished: /fabrique|confectionne|produit fini|pain|gateau|jus artisanal/,
   rawMaterial: /matieres? premieres?|intrants?|farine|tissu|bois|cacao|ingredients?|semences?|engrais/,
-  noVat: /sans tva|exonere|non assujetti|hors taxe non|pas de tva/,
-  invoicePresent: /facture|recu\b|ticket|bon de livraison|bordereau/
+  noVat: /sans tva|exonere|non assujetti|hors taxe non|pas de tva/
 };
 var EXPENSE_NATURES = [
-  { re: /electricite|\bcie\b|senelec|\beneo\b|sbee|cash power|woyofal|\bsonabel\b|\bnigelec\b|courant/, code: "6051", label: "Facture d'\xE9lectricit\xE9", confidence: 95 },
-  { re: /\beau\b|sodeci|\bsde\b|camwater|soneb|\bonea\b|\bsnde\b|facture d'eau/, code: "6052", label: "Facture d'eau", confidence: 95 },
-  { re: /carburant|essence|gasoil|gazoil|gas-?oil|diesel|\bplein\b|totalenergies|total energies|\bshell\b|oilibya/, code: "6053", label: "Carburant", confidence: 93 },
-  { re: /transport|\btaxi\b|moto-?taxi|\bworo\b|gbaka|livraison|\bfret\b|manutention|peage|expedition|\bbus\b/, code: "6121", label: "Frais de transport / livraison", confidence: 91 },
-  { re: /loyer|\bbail\b|location (?:du |de la |d')?(?:boutique|magasin|local|depot|bureau)/, code: "6221", label: "Loyer", confidence: 96 },
-  { re: /entretien|reparation|reparer|maintenance|depannage|mecanicien|plombier|electricien|vidange/, code: "6241", label: "Entretien et r\xE9parations", confidence: 90 },
-  { re: /internet|forfait|credit (?:telephon|d.?appel|de communication)|recharge (?:telephon|credit)|airtime|wifi|canalbox|abonnement (?:telephone|internet|orange|mtn|moov)|facture (?:orange|mtn|moov)|telephone|telecom|\bappels?\b/, code: "6271", label: "T\xE9l\xE9communications / Internet", confidence: 93 },
-  { re: /fourniture|papeterie|emballage|sachets?|ramette|cartouche|nettoyage|produits? d'entretien/, code: "6581", label: "Fournitures et frais divers", confidence: 82 }
+  { re: /electricite|\bcie\b|senelec|\beneo\b|sbee|cash power|woyofal|\bsonabel\b|\bnigelec\b|courant/, code: "6051", label: "Facture d'\xE9lectricit\xE9" },
+  { re: /\beau\b|sodeci|\bsde\b|camwater|soneb|\bonea\b|\bsnde\b|facture d'eau/, code: "6052", label: "Facture d'eau" },
+  { re: /carburant|essence|gasoil|gazoil|gas-?oil|diesel|\bplein\b|totalenergies|total energies|\bshell\b|oilibya/, code: "6053", label: "Carburant" },
+  { re: /transport|\btaxi\b|moto-?taxi|\bworo\b|gbaka|livraison|\bfret\b|manutention|peage|expedition|\bbus\b/, code: "6121", label: "Frais de transport / livraison" },
+  { re: /loyer|\bbail\b|location (?:du |de la |d')?(?:boutique|magasin|local|depot|bureau)/, code: "6221", label: "Loyer" },
+  { re: /entretien|reparation|reparer|maintenance|depannage|mecanicien|plombier|electricien|vidange/, code: "6241", label: "Entretien et r\xE9parations" },
+  { re: /internet|forfait|credit (?:telephon|d.?appel|de communication)|recharge (?:telephon|credit)|airtime|wifi|canalbox|abonnement (?:telephone|internet|orange|mtn|moov)|facture (?:orange|mtn|moov)|telephone|telecom|\bappels?\b/, code: "6271", label: "T\xE9l\xE9communications / Internet" },
+  { re: /fourniture|papeterie|emballage|sachets?|ramette|cartouche|nettoyage|produits? d'entretien/, code: "6581", label: "Fournitures et frais divers" }
 ];
 var SERVICE_ACCOUNT = "7061";
 var FINISHED_ACCOUNT = "7021";
@@ -2692,7 +2666,7 @@ function parseSegment(seg, now) {
   const counterparty = extractCounterparty(seg);
   const isCreditSale = RE.credit.test(norm);
   const vatApplicable = RE.noVat.test(norm) ? false : void 0;
-  const base = (kind, label, confidence, extra = {}) => {
+  const base = (kind, label, extra = {}) => {
     const amount = info?.amount ?? 0;
     let settlement = "paid";
     let paidAmount2;
@@ -2709,7 +2683,6 @@ function parseSegment(seg, now) {
       vatApplicable,
       counterparty,
       label,
-      confidence,
       date,
       sourceText: seg,
       ...extra
@@ -2739,15 +2712,15 @@ function parseSegment(seg, now) {
   if (RE.depreciation.test(norm)) {
     if (!info) return needAmount("l'amortissement \xE0 constater");
     const assetCode = /moto|camion|vehicule|voiture|tricycle/.test(norm) ? "215" : /machine|outillage|generateur|groupe electrogene|congelateur/.test(norm) ? "241" : /etagere|mobilier|etal|table|chaise/.test(norm) ? "245" : "244";
-    return { op: base("depreciation", `Dotation aux amortissements \u2013 ${cap(extractGoods(seg, /amortissement (?:de |du |d'|des |sur )?(?:l'|la |le |les )?/) ?? "mat\xE9riel")}`, 88, { natureAccountCode: assetCode, paymentMethod: void 0 }) };
+    return { op: base("depreciation", `Dotation aux amortissements \u2013 ${cap(extractGoods(seg, /amortissement (?:de |du |d'|des |sur )?(?:l'|la |le |les )?/) ?? "mat\xE9riel")}`, { natureAccountCode: assetCode, paymentMethod: void 0 }) };
   }
   if (RE.opening.test(norm)) {
     if (!info) return needAmount("le solde d'ouverture");
-    return { op: base("opening_balance", `Solde d'ouverture \u2013 ${PAYMENT_METHOD_LABEL[primary ?? "cash"]}`, 85) };
+    return { op: base("opening_balance", `Solde d'ouverture \u2013 ${PAYMENT_METHOD_LABEL[primary ?? "cash"]}`) };
   }
   if (RE.ownerWithdrawal.test(norm) && !RE.customerPayment.test(norm)) {
     if (!info) return needAmount("le retrait");
-    return { op: base("owner_withdrawal", "Retrait de fonds sans affectation professionnelle", 55, {
+    return { op: base("owner_withdrawal", "Retrait de fonds sans affectation professionnelle", {
       natureAccountCode: "4711",
       anomaly: "Retrait de fonds sans motif d\u2019affectation professionnelle : risque de confusion de patrimoine."
     }) };
@@ -2756,65 +2729,64 @@ function parseSegment(seg, now) {
     const { from, to } = fromToPair();
     if (from && to && from !== to) {
       if (!info) return needAmount("le transfert");
-      return { op: base("transfer", `Transfert de fonds : ${ACCOUNT_SHORT[from]} \u2192 ${ACCOUNT_SHORT[to]}`, 93, { paymentMethod: from, toMethod: to, settlement: "paid" }) };
+      return { op: base("transfer", `Transfert de fonds : ${ACCOUNT_SHORT[from]} \u2192 ${ACCOUNT_SHORT[to]}`, { paymentMethod: from, toMethod: to, settlement: "paid" }) };
     }
   }
   if (/\bretrait\b|\bretire\b/.test(norm) && (!primary || primary === "cash") && !RE.purchase.test(norm) && !RE.salary.test(norm) && !/fournisseur/.test(norm)) {
     if (!info) return needAmount("le retrait");
-    return { op: base("owner_withdrawal", "Retrait d\u2019esp\xE8ces sans justificatif pr\xE9cis", 50, {
+    return { op: base("owner_withdrawal", "Retrait d\u2019esp\xE8ces sans justificatif pr\xE9cis", {
       natureAccountCode: "4711",
       anomaly: "Retrait de fonds sans motif d\u2019affectation professionnelle : risque de confusion de patrimoine."
     }) };
   }
   if (RE.loanRepayment.test(norm)) {
     if (!info) return needAmount("l'\xE9ch\xE9ance rembours\xE9e");
-    return { op: base("loan_repayment", "Remboursement d\u2019emprunt", 88) };
+    return { op: base("loan_repayment", "Remboursement d\u2019emprunt") };
   }
   if (RE.loanReceived.test(norm)) {
     if (!info) return needAmount("le montant du pr\xEAt");
-    return { op: base("loan_received", `Emprunt re\xE7u${counterparty ? ` \u2013 ${counterparty}` : ""}`, 88) };
+    return { op: base("loan_received", `Emprunt re\xE7u${counterparty ? ` \u2013 ${counterparty}` : ""}`) };
   }
   if (RE.capital.test(norm)) {
     if (!info) return needAmount("l'apport");
-    return { op: base("capital_contribution", "Apport en capital", 86) };
+    return { op: base("capital_contribution", "Apport en capital") };
   }
   if (RE.bankFee.test(norm) && !RE.commissionEarned.test(norm)) {
     if (!info) return needAmount("les frais");
-    return { op: base("bank_fee", `Frais bancaires / Mobile Money${primary ? ` (${PAYMENT_METHOD_LABEL[primary]})` : ""}`, 92) };
+    return { op: base("bank_fee", `Frais bancaires / Mobile Money${primary ? ` (${PAYMENT_METHOD_LABEL[primary]})` : ""}`) };
   }
   if (RE.commissionEarned.test(norm)) {
     if (!info) return needAmount("la commission");
-    return { op: base("other_income", "Commission re\xE7ue", 88, { natureAccountCode: "7071" }) };
+    return { op: base("other_income", "Commission re\xE7ue", { natureAccountCode: "7071" }) };
   }
   if (RE.supplierPayment.test(norm) && !/\bachete\b|\bachat\b/.test(norm)) {
     if (!info) return needAmount("le r\xE8glement");
-    return { op: base("supplier_payment", `R\xE8glement fournisseur${counterparty ? ` ${counterparty}` : ""}`, 88, { settlement: "paid" }) };
+    return { op: base("supplier_payment", `R\xE8glement fournisseur${counterparty ? ` ${counterparty}` : ""}`, { settlement: "paid" }) };
   }
   if (RE.customerPayment.test(norm) && !/\bvendu\b/.test(norm)) {
     if (!info) return needAmount("le r\xE8glement");
-    return { op: base("customer_payment", `R\xE8glement client${counterparty ? ` ${counterparty}` : ""}`, 88, { settlement: "paid" }) };
+    return { op: base("customer_payment", `R\xE8glement client${counterparty ? ` ${counterparty}` : ""}`, { settlement: "paid" }) };
   }
   if (RE.social.test(norm)) {
     if (!info) return needAmount("les cotisations");
-    return { op: base("expense", "Cotisations sociales", 93, { natureAccountCode: "6451", vatApplicable: false }) };
+    return { op: base("expense", "Cotisations sociales", { natureAccountCode: "6451", vatApplicable: false }) };
   }
   if (RE.salary.test(norm)) {
     if (!info) return needAmount("le salaire");
-    return { op: base("expense", `Salaires${counterparty ? ` \u2013 ${counterparty}` : ""}`, 93, { natureAccountCode: "6411", vatApplicable: false }) };
+    return { op: base("expense", `Salaires${counterparty ? ` \u2013 ${counterparty}` : ""}`, { natureAccountCode: "6411", vatApplicable: false }) };
   }
   if (RE.asset.test(norm)) {
     if (!info) return needAmount("le prix de l'\xE9quipement");
     const code = /moto\b|camion|vehicule|voiture|tricycle/.test(norm) ? "215" : /machine|generateur|groupe electrogene|congelateur|frigo|refrigerateur|balance/.test(norm) ? "241" : /etagere|mobilier|etal\b/.test(norm) ? "245" : "244";
     const goods = extractGoods(seg, /(?:achete|achat|acquis|acquisition|paye|payer)\s+(?:d'|de |du |des |un |une |le |la |l')?/i);
-    return { op: base("asset_purchase", `Acquisition ${goods ? cap(goods) : "d\u2019immobilisation"}`, 88, { natureAccountCode: code }) };
+    return { op: base("asset_purchase", `Acquisition ${goods ? cap(goods) : "d\u2019immobilisation"}`, { natureAccountCode: code }) };
   }
   const isSaleWord = RE.sale.test(norm);
   if (!isSaleWord) {
     for (const rule of EXPENSE_NATURES) {
       if (rule.re.test(norm)) {
         if (!info) return needAmount(rule.label.toLowerCase());
-        const needsReceipt = rule.code === "6121" && primary === "cash" && !RE.invoicePresent.test(norm);
-        return { op: base("expense", rule.label, needsReceipt ? 76 : rule.confidence, { natureAccountCode: rule.code }) };
+        return { op: base("expense", rule.label, { natureAccountCode: rule.code }) };
       }
     }
   }
@@ -2824,28 +2796,28 @@ function parseSegment(seg, now) {
     const isFinished = RE.finished.test(norm);
     const goods = extractGoods(seg, /(?:vendu|vend|vente d[eu']?s?|facture|livre)\s+(?:d'|de |du |des |la |le |les |l')?/i);
     const label = isService ? `Prestation${goods ? ` : ${goods}` : ""}` : `Vente${goods ? ` de ${goods}` : ""}`;
-    return { op: base("sale", `${label}${counterparty ? ` \u2013 ${counterparty}` : ""}`, 94, {
+    return { op: base("sale", `${label}${counterparty ? ` \u2013 ${counterparty}` : ""}`, {
       natureAccountCode: isService ? SERVICE_ACCOUNT : isFinished ? FINISHED_ACCOUNT : "7011"
     }) };
   }
   if (RE.purchase.test(norm) || /\bachete\b/.test(norm)) {
     if (!info) return needAmount("l'achat");
     const goods = extractGoods(seg, /(?:achete|achat|acheter|commande|approvisionnement)\s+(?:d'|de |du |des |la |le |les |l')?/i);
-    return { op: base("purchase", `Achat${goods ? ` de ${goods}` : " de marchandises"}${counterparty ? ` \u2013 ${counterparty}` : ""}`, 90, {
+    return { op: base("purchase", `Achat${goods ? ` de ${goods}` : " de marchandises"}${counterparty ? ` \u2013 ${counterparty}` : ""}`, {
       natureAccountCode: RE.rawMaterial.test(norm) ? "6021" : "6011"
     }) };
   }
   if (RE.otherIncome.test(norm)) {
     if (!info) return needAmount("le montant re\xE7u");
-    return { op: base("other_income", "Produit accessoire", 80, { natureAccountCode: /subvention|don\b/.test(norm) ? "8511" : "7071" }) };
+    return { op: base("other_income", "Produit accessoire", { natureAccountCode: /subvention|don\b/.test(norm) ? "8511" : "7071" }) };
   }
   if (/\b(?:paye|payee|regle|depense|decaisse|sorti|sortie|debourse|reglement)\b/.test(norm)) {
     if (!info) return needAmount("la d\xE9pense");
-    return { op: base("expense", "D\xE9pense diverse \xE0 qualifier", 62, { natureAccountCode: "6581" }) };
+    return { op: base("expense", "D\xE9pense diverse \xE0 qualifier", { natureAccountCode: "6581" }) };
   }
   if (/\b(?:recu|encaisse|rentre|rentree|entree|touche|gagne)\b/.test(norm)) {
     if (!info) return needAmount("l'encaissement");
-    return { op: base("sale", "Encaissement \xE0 qualifier", 65, { natureAccountCode: "7011" }) };
+    return { op: base("sale", "Encaissement \xE0 qualifier", { natureAccountCode: "7011" }) };
   }
   return { missing: "kind" };
 }
@@ -2888,7 +2860,7 @@ function parseMobileMoneySms(sms, now) {
   const common = { paymentMethod: provider, settlement: "paid", counterparty, date, pieceRef, sourceText: sms, fee: fee || void 0 };
   const ops = [];
   if (withdrawal && !received) {
-    ops.push({ kind: "transfer", amount, ...common, toMethod: "cash", label: `Retrait Mobile Money \u2192 caisse (${PAYMENT_METHOD_LABEL[provider ?? "orange_money"]})`, confidence: 92 });
+    ops.push({ kind: "transfer", amount, ...common, toMethod: "cash", label: `Retrait Mobile Money \u2192 caisse (${PAYMENT_METHOD_LABEL[provider ?? "orange_money"]})` });
   } else if (received) {
     ops.push({
       kind: "sale",
@@ -2896,16 +2868,15 @@ function parseMobileMoneySms(sms, now) {
       ...common,
       natureAccountCode: "7011",
       label: `Encaissement ${PAYMENT_METHOD_LABEL[provider ?? "orange_money"]}${counterparty ? ` de ${counterparty}` : ""}`,
-      confidence: 82,
       explanation: void 0
     });
   } else if (airtime) {
-    ops.push({ kind: "expense", amount, ...common, natureAccountCode: "6271", label: `Achat cr\xE9dit / forfait (${PAYMENT_METHOD_LABEL[provider ?? "orange_money"]})`, confidence: 92 });
+    ops.push({ kind: "expense", amount, ...common, natureAccountCode: "6271", label: `Achat cr\xE9dit / forfait (${PAYMENT_METHOD_LABEL[provider ?? "orange_money"]})` });
   } else {
-    ops.push({ kind: "expense", amount, ...common, natureAccountCode: "6011", label: `Paiement Mobile Money${counterparty ? ` \xE0 ${counterparty}` : ""}`, confidence: 72 });
+    ops.push({ kind: "expense", amount, ...common, natureAccountCode: "6011", label: `Paiement Mobile Money${counterparty ? ` \xE0 ${counterparty}` : ""}` });
   }
   if (fee > 0) {
-    ops.push({ kind: "bank_fee", amount: fee, paymentMethod: provider, settlement: "paid", label: `Frais ${PAYMENT_METHOD_LABEL[provider ?? "orange_money"]}`, confidence: 95, date, pieceRef, sourceText: sms });
+    ops.push({ kind: "bank_fee", amount: fee, paymentMethod: provider, settlement: "paid", label: `Frais ${PAYMENT_METHOD_LABEL[provider ?? "orange_money"]}`, date, pieceRef, sourceText: sms });
   }
   return ops;
 }
@@ -2998,11 +2969,10 @@ R\xC8GLES POUR LES OP\xC9RATIONS :
 - "settlement" : "paid" (r\xE9gl\xE9), "credit" (pas encore pay\xE9) ou "partial" (acompte : renseigne paidAmount).
 - "amount" = montant TOTAL TTC en FCFA (entier). Quantit\xE9 \xD7 prix unitaire si besoin ("3 sacs \xE0 5000F" = 15000). "45k" = 45000.
 - "vatApplicable" : true seulement pour ventes/achats/d\xE9penses soumis \xE0 TVA ; false pour salaires, pr\xEAts, transferts, frais bancaires, retraits. Si un document indique la TVA, renseigne "vatAmount".
-- "confidence" (0-100) : > 90 si tout est pr\xE9cis ; < 80 si ambigu ou sans pi\xE8ce ; 50 pour un retrait sans motif.
-- "anomaly" : cha\xEEne non vide UNIQUEMENT pour une vraie anomalie (retrait sans justificatif, m\xE9lange personnel/professionnel, montant incoh\xE9rent, doublon \xE9vident). Une simple incertitude se traduit par une "confidence" basse, jamais par "anomaly".
+- "anomaly" : cha\xEEne non vide UNIQUEMENT pour une vraie anomalie (retrait sans justificatif, m\xE9lange personnel/professionnel, montant incoh\xE9rent, doublon \xE9vident). Une simple incertitude n'est jamais une "anomaly".
 - "sourceSnippet" : le morceau exact du message d'o\xF9 vient cette op\xE9ration.
 - "label" : libell\xE9 comptable court. "date" au format AAAA-MM-JJ si l'utilisateur ou le document pr\xE9cise une date (hier, avant-hier, date sur le re\xE7u), sinon vide.
-- SMS Mobile Money : reconnais l'op\xE9rateur, le montant, les frais (op\xE9ration bank_fee s\xE9par\xE9e), l'identifiant de transaction ("pieceRef"). Un SMS \xAB vous avez re\xE7u \xBB = encaissement \xE0 confirmer (confidence \u2264 82).
+- SMS Mobile Money : reconnais l'op\xE9rateur, le montant, les frais (op\xE9ration bank_fee s\xE9par\xE9e), l'identifiant de transaction ("pieceRef"). Un SMS \xAB vous avez re\xE7u \xBB = encaissement \xE0 confirmer.
 ${hasDocument ? '- Un document est joint (facture, re\xE7u, relev\xE9, PDF) : extrais fournisseur/client (counterparty), date, num\xE9ro (pieceRef), montant TTC, TVA (vatAmount), mode de paiement lu sur la pi\xE8ce. Si le document est illisible, intent = "clarification".\n' : ""}
 DONN\xC9ES DU DOSSIER (calcul\xE9es sur les \xE9critures r\xE9elles) :
 ${JSON.stringify(analytics)}
@@ -3023,13 +2993,12 @@ var operationSchema = {
     vatAmount: { type: Type.NUMBER },
     counterparty: { type: Type.STRING },
     label: { type: Type.STRING },
-    confidence: { type: Type.INTEGER },
     anomaly: { type: Type.STRING },
     date: { type: Type.STRING },
     pieceRef: { type: Type.STRING },
     sourceSnippet: { type: Type.STRING }
   },
-  required: ["kind", "amount", "paymentMethod", "settlement", "label", "confidence", "sourceSnippet"]
+  required: ["kind", "amount", "paymentMethod", "settlement", "label", "sourceSnippet"]
 };
 var responseSchema = {
   type: Type.OBJECT,
@@ -3083,7 +3052,6 @@ function reconcileOperations(raw, fullText, now) {
       vatAmount: Number(r.vatAmount) > 0 ? Math.round(Number(r.vatAmount)) : void 0,
       counterparty: r.counterparty || void 0,
       label: String(r.label || "Op\xE9ration").slice(0, 140),
-      confidence: Math.max(0, Math.min(100, Math.round(Number(r.confidence) || 80))),
       anomaly: r.anomaly ? String(r.anomaly) : void 0,
       date: /^\d{4}-\d{2}-\d{2}$/.test(r.date ?? "") ? r.date : void 0,
       pieceRef: r.pieceRef || void 0,

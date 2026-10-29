@@ -38,7 +38,6 @@ export interface ParsedOperation {
   counterparty?: string;
   label: string;
   explanation?: string;
-  confidence: number;
   anomaly?: string;
   date?: string;
   /** Référence de pièce (ex : ID de transaction Mobile Money) */

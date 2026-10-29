@@ -200,14 +200,10 @@ export function buildEntries(ops: ParsedOperation[], { ctx, rawInput, inputType,
     // Reprise d'une correction passée de l'expert pour la même nature d'opération
     let nature = isKnownAccount(op.natureAccountCode) ? op.natureAccountCode : undefined;
     let precedentNote: string | undefined;
-    let precedentBoost = 0;
     const precedent = findPrecedent(op, ctx);
     if (precedent && precedent.nature !== nature) {
       nature = precedent.nature;
       precedentNote = `Compte ${nature} repris de la correction de l'expert sur l'écriture ${precedent.entry.pieceRef}.`;
-      precedentBoost = 6;
-    } else if (precedent) {
-      precedentBoost = 3;
     }
 
     const salesDefault = codeOf(settings.defaultCreditSalesAccount);
@@ -292,7 +288,6 @@ export function buildEntries(ops: ParsedOperation[], { ctx, rawInput, inputType,
         ? Math.min(Math.max(0, Math.round(op.vatAmount)), line.amount)
         : vatable ? Math.round((line.amount * rate) / (100 + rate)) : 0;
 
-      let confidence = op.confidence + precedentBoost - (assumed ? 5 : 0);
       let anomaly = op.anomaly;
       const cashSide = [line.debit, line.credit].some(c => c === '5711' || c === '5721') && line.method === 'cash';
       const flaggable = !['transfer', 'opening_balance', 'capital_contribution', 'loan_received', 'loan_repayment', 'owner_withdrawal', 'depreciation'].includes(op.kind);
@@ -305,16 +300,13 @@ export function buildEntries(ops: ParsedOperation[], { ctx, rawInput, inputType,
       }
       if (!anomaly && date > today) {
         anomaly = `Date postérieure à aujourd'hui (${date}) : vérifier la date de l'opération.`;
-        confidence = Math.min(confidence, 70);
       }
       if (settings.duplicateDetection) {
         const dup = findDuplicate(line, op, date, ctx);
         if (dup) {
           anomaly = `Doublon possible avec l'écriture ${dup.pieceRef} du ${dup.date} (même montant, mêmes comptes).`;
-          confidence = Math.min(confidence, 70);
         }
       }
-      confidence = Math.max(0, Math.min(99, Math.round(confidence)));
 
       // L'IA propose : la validation se décide à l'enregistrement (autoValidates, server/routes/entries.ts).
       const status: JournalEntry['status'] = anomaly ? 'anomaly' : 'pending_review';
@@ -335,7 +327,6 @@ export function buildEntries(ops: ParsedOperation[], { ctx, rawInput, inputType,
         amount: line.amount,
         tvaAmount,
         status,
-        confidenceScore: confidence,
         detectedAnomaly: anomaly,
         rawInput,
         inputType,
@@ -346,7 +337,6 @@ export function buildEntries(ops: ParsedOperation[], { ctx, rawInput, inputType,
           timestamp: new Date().toISOString(),
           action,
           author: 'Agent AxeCompta (IA Syscohada)',
-          confidenceScore: confidence,
           notes: [anomaly, precedentNote, `Attribué via ${source}`].filter(Boolean).join(' • '),
         }],
       });

@@ -93,7 +93,6 @@ router.post('/import-backup', handler(async (req, res) => {
       tvaAmount: e.tvaAmount,
       clientDossierId: dossierId,
       status: e.status as any,
-      confidenceScore: e.confidenceScore,
       detectedAnomaly: e.detectedAnomaly,
       rawInput: e.rawInput,
       inputType: e.inputType as any,
@@ -114,7 +113,6 @@ router.post('/import-backup', handler(async (req, res) => {
         author: a.author,
         notes: a.notes,
         previousValue: a.previousValue,
-        confidenceScore: a.confidenceScore,
       });
     }
   });

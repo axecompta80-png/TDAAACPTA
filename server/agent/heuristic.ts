@@ -108,20 +108,19 @@ const RE = {
   finished: /fabrique|confectionne|produit fini|pain|gateau|jus artisanal/,
   rawMaterial: /matieres? premieres?|intrants?|farine|tissu|bois|cacao|ingredients?|semences?|engrais/,
   noVat: /sans tva|exonere|non assujetti|hors taxe non|pas de tva/,
-  invoicePresent: /facture|recu\b|ticket|bon de livraison|bordereau/,
 };
 
-interface NatureRule { re: RegExp; code: string; label: string; confidence: number }
+interface NatureRule { re: RegExp; code: string; label: string }
 
 const EXPENSE_NATURES: NatureRule[] = [
-  { re: /electricite|\bcie\b|senelec|\beneo\b|sbee|cash power|woyofal|\bsonabel\b|\bnigelec\b|courant/, code: '6051', label: "Facture d'électricité", confidence: 95 },
-  { re: /\beau\b|sodeci|\bsde\b|camwater|soneb|\bonea\b|\bsnde\b|facture d'eau/, code: '6052', label: "Facture d'eau", confidence: 95 },
-  { re: /carburant|essence|gasoil|gazoil|gas-?oil|diesel|\bplein\b|totalenergies|total energies|\bshell\b|oilibya/, code: '6053', label: 'Carburant', confidence: 93 },
-  { re: /transport|\btaxi\b|moto-?taxi|\bworo\b|gbaka|livraison|\bfret\b|manutention|peage|expedition|\bbus\b/, code: '6121', label: 'Frais de transport / livraison', confidence: 91 },
-  { re: /loyer|\bbail\b|location (?:du |de la |d')?(?:boutique|magasin|local|depot|bureau)/, code: '6221', label: 'Loyer', confidence: 96 },
-  { re: /entretien|reparation|reparer|maintenance|depannage|mecanicien|plombier|electricien|vidange/, code: '6241', label: 'Entretien et réparations', confidence: 90 },
-  { re: /internet|forfait|credit (?:telephon|d.?appel|de communication)|recharge (?:telephon|credit)|airtime|wifi|canalbox|abonnement (?:telephone|internet|orange|mtn|moov)|facture (?:orange|mtn|moov)|telephone|telecom|\bappels?\b/, code: '6271', label: 'Télécommunications / Internet', confidence: 93 },
-  { re: /fourniture|papeterie|emballage|sachets?|ramette|cartouche|nettoyage|produits? d'entretien/, code: '6581', label: 'Fournitures et frais divers', confidence: 82 },
+  { re: /electricite|\bcie\b|senelec|\beneo\b|sbee|cash power|woyofal|\bsonabel\b|\bnigelec\b|courant/, code: '6051', label: "Facture d'électricité" },
+  { re: /\beau\b|sodeci|\bsde\b|camwater|soneb|\bonea\b|\bsnde\b|facture d'eau/, code: '6052', label: "Facture d'eau" },
+  { re: /carburant|essence|gasoil|gazoil|gas-?oil|diesel|\bplein\b|totalenergies|total energies|\bshell\b|oilibya/, code: '6053', label: 'Carburant' },
+  { re: /transport|\btaxi\b|moto-?taxi|\bworo\b|gbaka|livraison|\bfret\b|manutention|peage|expedition|\bbus\b/, code: '6121', label: 'Frais de transport / livraison' },
+  { re: /loyer|\bbail\b|location (?:du |de la |d')?(?:boutique|magasin|local|depot|bureau)/, code: '6221', label: 'Loyer' },
+  { re: /entretien|reparation|reparer|maintenance|depannage|mecanicien|plombier|electricien|vidange/, code: '6241', label: 'Entretien et réparations' },
+  { re: /internet|forfait|credit (?:telephon|d.?appel|de communication)|recharge (?:telephon|credit)|airtime|wifi|canalbox|abonnement (?:telephone|internet|orange|mtn|moov)|facture (?:orange|mtn|moov)|telephone|telecom|\bappels?\b/, code: '6271', label: 'Télécommunications / Internet' },
+  { re: /fourniture|papeterie|emballage|sachets?|ramette|cartouche|nettoyage|produits? d'entretien/, code: '6581', label: 'Fournitures et frais divers' },
 ];
 
 const SERVICE_ACCOUNT = '7061';
@@ -173,7 +172,7 @@ export function parseSegment(seg: string, now: Date): SegmentResult {
   const isCreditSale = RE.credit.test(norm);
   const vatApplicable = RE.noVat.test(norm) ? false : undefined;
 
-  const base = (kind: OperationKind, label: string, confidence: number, extra: Partial<ParsedOperation> = {}): ParsedOperation => {
+  const base = (kind: OperationKind, label: string, extra: Partial<ParsedOperation> = {}): ParsedOperation => {
     const amount = info?.amount ?? 0;
     let settlement: ParsedOperation['settlement'] = 'paid';
     let paidAmount: number | undefined;
@@ -181,7 +180,7 @@ export function parseSegment(seg: string, now: Date): SegmentResult {
     else if (isCreditSale && (kind === 'sale' || kind === 'purchase' || kind === 'expense' || kind === 'asset_purchase')) settlement = 'credit';
     return {
       kind, amount, paymentMethod: primary, settlement, paidAmount, vatApplicable, counterparty, label,
-      confidence, date, sourceText: seg, ...extra,
+      date, sourceText: seg, ...extra,
     };
   };
 
@@ -214,19 +213,19 @@ export function parseSegment(seg: string, now: Date): SegmentResult {
     const assetCode = /moto|camion|vehicule|voiture|tricycle/.test(norm) ? '215'
       : /machine|outillage|generateur|groupe electrogene|congelateur/.test(norm) ? '241'
       : /etagere|mobilier|etal|table|chaise/.test(norm) ? '245' : '244';
-    return { op: base('depreciation', `Dotation aux amortissements – ${cap(extractGoods(seg, /amortissement (?:de |du |d'|des |sur )?(?:l'|la |le |les )?/) ?? 'matériel')}`, 88, { natureAccountCode: assetCode, paymentMethod: undefined }) };
+    return { op: base('depreciation', `Dotation aux amortissements – ${cap(extractGoods(seg, /amortissement (?:de |du |d'|des |sur )?(?:l'|la |le |les )?/) ?? 'matériel')}`, { natureAccountCode: assetCode, paymentMethod: undefined }) };
   }
 
   // 2. Solde d'ouverture
   if (RE.opening.test(norm)) {
     if (!info) return needAmount("le solde d'ouverture");
-    return { op: base('opening_balance', `Solde d'ouverture – ${PAYMENT_METHOD_LABEL[primary ?? 'cash']}`, 85) };
+    return { op: base('opening_balance', `Solde d'ouverture – ${PAYMENT_METHOD_LABEL[primary ?? 'cash']}`) };
   }
 
   // 3. Prélèvement personnel
   if (RE.ownerWithdrawal.test(norm) && !RE.customerPayment.test(norm)) {
     if (!info) return needAmount('le retrait');
-    return { op: base('owner_withdrawal', 'Retrait de fonds sans affectation professionnelle', 55, {
+    return { op: base('owner_withdrawal', 'Retrait de fonds sans affectation professionnelle', {
       natureAccountCode: '4711',
       anomaly: 'Retrait de fonds sans motif d’affectation professionnelle : risque de confusion de patrimoine.',
     }) };
@@ -237,13 +236,13 @@ export function parseSegment(seg: string, now: Date): SegmentResult {
     const { from, to } = fromToPair();
     if (from && to && from !== to) {
       if (!info) return needAmount('le transfert');
-      return { op: base('transfer', `Transfert de fonds : ${ACCOUNT_SHORT[from]} → ${ACCOUNT_SHORT[to]}`, 93, { paymentMethod: from, toMethod: to, settlement: 'paid' }) };
+      return { op: base('transfer', `Transfert de fonds : ${ACCOUNT_SHORT[from]} → ${ACCOUNT_SHORT[to]}`, { paymentMethod: from, toMethod: to, settlement: 'paid' }) };
     }
   }
   // "retrait espèces 350 000F" sans source ni motif → prélèvement à justifier
   if (/\bretrait\b|\bretire\b/.test(norm) && (!primary || primary === 'cash') && !RE.purchase.test(norm) && !RE.salary.test(norm) && !/fournisseur/.test(norm)) {
     if (!info) return needAmount('le retrait');
-    return { op: base('owner_withdrawal', 'Retrait d’espèces sans justificatif précis', 50, {
+    return { op: base('owner_withdrawal', 'Retrait d’espèces sans justificatif précis', {
       natureAccountCode: '4711',
       anomaly: 'Retrait de fonds sans motif d’affectation professionnelle : risque de confusion de patrimoine.',
     }) };
@@ -252,45 +251,45 @@ export function parseSegment(seg: string, now: Date): SegmentResult {
   // 5. Financement
   if (RE.loanRepayment.test(norm)) {
     if (!info) return needAmount("l'échéance remboursée");
-    return { op: base('loan_repayment', 'Remboursement d’emprunt', 88) };
+    return { op: base('loan_repayment', 'Remboursement d’emprunt') };
   }
   if (RE.loanReceived.test(norm)) {
     if (!info) return needAmount('le montant du prêt');
-    return { op: base('loan_received', `Emprunt reçu${counterparty ? ` – ${counterparty}` : ''}`, 88) };
+    return { op: base('loan_received', `Emprunt reçu${counterparty ? ` – ${counterparty}` : ''}`) };
   }
   if (RE.capital.test(norm)) {
     if (!info) return needAmount("l'apport");
-    return { op: base('capital_contribution', 'Apport en capital', 86) };
+    return { op: base('capital_contribution', 'Apport en capital') };
   }
 
   // 6. Frais bancaires / Mobile Money
   if (RE.bankFee.test(norm) && !RE.commissionEarned.test(norm)) {
     if (!info) return needAmount('les frais');
-    return { op: base('bank_fee', `Frais bancaires / Mobile Money${primary ? ` (${PAYMENT_METHOD_LABEL[primary]})` : ''}`, 92) };
+    return { op: base('bank_fee', `Frais bancaires / Mobile Money${primary ? ` (${PAYMENT_METHOD_LABEL[primary]})` : ''}`) };
   }
   if (RE.commissionEarned.test(norm)) {
     if (!info) return needAmount('la commission');
-    return { op: base('other_income', 'Commission reçue', 88, { natureAccountCode: '7071' }) };
+    return { op: base('other_income', 'Commission reçue', { natureAccountCode: '7071' }) };
   }
 
   // 7. Règlements de tiers
   if (RE.supplierPayment.test(norm) && !/\bachete\b|\bachat\b/.test(norm)) {
     if (!info) return needAmount('le règlement');
-    return { op: base('supplier_payment', `Règlement fournisseur${counterparty ? ` ${counterparty}` : ''}`, 88, { settlement: 'paid' }) };
+    return { op: base('supplier_payment', `Règlement fournisseur${counterparty ? ` ${counterparty}` : ''}`, { settlement: 'paid' }) };
   }
   if (RE.customerPayment.test(norm) && !/\bvendu\b/.test(norm)) {
     if (!info) return needAmount('le règlement');
-    return { op: base('customer_payment', `Règlement client${counterparty ? ` ${counterparty}` : ''}`, 88, { settlement: 'paid' }) };
+    return { op: base('customer_payment', `Règlement client${counterparty ? ` ${counterparty}` : ''}`, { settlement: 'paid' }) };
   }
 
   // 8. Personnel
   if (RE.social.test(norm)) {
     if (!info) return needAmount('les cotisations');
-    return { op: base('expense', 'Cotisations sociales', 93, { natureAccountCode: '6451', vatApplicable: false }) };
+    return { op: base('expense', 'Cotisations sociales', { natureAccountCode: '6451', vatApplicable: false }) };
   }
   if (RE.salary.test(norm)) {
     if (!info) return needAmount('le salaire');
-    return { op: base('expense', `Salaires${counterparty ? ` – ${counterparty}` : ''}`, 93, { natureAccountCode: '6411', vatApplicable: false }) };
+    return { op: base('expense', `Salaires${counterparty ? ` – ${counterparty}` : ''}`, { natureAccountCode: '6411', vatApplicable: false }) };
   }
 
   // 9. Immobilisation
@@ -300,7 +299,7 @@ export function parseSegment(seg: string, now: Date): SegmentResult {
       : /machine|generateur|groupe electrogene|congelateur|frigo|refrigerateur|balance/.test(norm) ? '241'
       : /etagere|mobilier|etal\b/.test(norm) ? '245' : '244';
     const goods = extractGoods(seg, /(?:achete|achat|acquis|acquisition|paye|payer)\s+(?:d'|de |du |des |un |une |le |la |l')?/i);
-    return { op: base('asset_purchase', `Acquisition ${goods ? cap(goods) : 'd’immobilisation'}`, 88, { natureAccountCode: code }) };
+    return { op: base('asset_purchase', `Acquisition ${goods ? cap(goods) : 'd’immobilisation'}`, { natureAccountCode: code }) };
   }
 
   // 10. Charges courantes identifiées par mot-clé
@@ -309,8 +308,7 @@ export function parseSegment(seg: string, now: Date): SegmentResult {
     for (const rule of EXPENSE_NATURES) {
       if (rule.re.test(norm)) {
         if (!info) return needAmount(rule.label.toLowerCase());
-        const needsReceipt = rule.code === '6121' && primary === 'cash' && !RE.invoicePresent.test(norm);
-        return { op: base('expense', rule.label, needsReceipt ? 76 : rule.confidence, { natureAccountCode: rule.code }) };
+        return { op: base('expense', rule.label, { natureAccountCode: rule.code }) };
       }
     }
   }
@@ -322,7 +320,7 @@ export function parseSegment(seg: string, now: Date): SegmentResult {
     const isFinished = RE.finished.test(norm);
     const goods = extractGoods(seg, /(?:vendu|vend|vente d[eu']?s?|facture|livre)\s+(?:d'|de |du |des |la |le |les |l')?/i);
     const label = isService ? `Prestation${goods ? ` : ${goods}` : ''}` : `Vente${goods ? ` de ${goods}` : ''}`;
-    return { op: base('sale', `${label}${counterparty ? ` – ${counterparty}` : ''}`, 94, {
+    return { op: base('sale', `${label}${counterparty ? ` – ${counterparty}` : ''}`, {
       natureAccountCode: isService ? SERVICE_ACCOUNT : isFinished ? FINISHED_ACCOUNT : '7011',
     }) };
   }
@@ -331,24 +329,24 @@ export function parseSegment(seg: string, now: Date): SegmentResult {
   if (RE.purchase.test(norm) || /\bachete\b/.test(norm)) {
     if (!info) return needAmount("l'achat");
     const goods = extractGoods(seg, /(?:achete|achat|acheter|commande|approvisionnement)\s+(?:d'|de |du |des |la |le |les |l')?/i);
-    return { op: base('purchase', `Achat${goods ? ` de ${goods}` : ' de marchandises'}${counterparty ? ` – ${counterparty}` : ''}`, 90, {
+    return { op: base('purchase', `Achat${goods ? ` de ${goods}` : ' de marchandises'}${counterparty ? ` – ${counterparty}` : ''}`, {
       natureAccountCode: RE.rawMaterial.test(norm) ? '6021' : '6011',
     }) };
   }
 
   if (RE.otherIncome.test(norm)) {
     if (!info) return needAmount('le montant reçu');
-    return { op: base('other_income', 'Produit accessoire', 80, { natureAccountCode: /subvention|don\b/.test(norm) ? '8511' : '7071' }) };
+    return { op: base('other_income', 'Produit accessoire', { natureAccountCode: /subvention|don\b/.test(norm) ? '8511' : '7071' }) };
   }
 
   // 13. Verbes génériques : direction connue, nature inconnue → vérification humaine
   if (/\b(?:paye|payee|regle|depense|decaisse|sorti|sortie|debourse|reglement)\b/.test(norm)) {
     if (!info) return needAmount('la dépense');
-    return { op: base('expense', 'Dépense diverse à qualifier', 62, { natureAccountCode: '6581' }) };
+    return { op: base('expense', 'Dépense diverse à qualifier', { natureAccountCode: '6581' }) };
   }
   if (/\b(?:recu|encaisse|rentre|rentree|entree|touche|gagne)\b/.test(norm)) {
     if (!info) return needAmount("l'encaissement");
-    return { op: base('sale', 'Encaissement à qualifier', 65, { natureAccountCode: '7011' }) };
+    return { op: base('sale', 'Encaissement à qualifier', { natureAccountCode: '7011' }) };
   }
 
   return { missing: 'kind' };
@@ -399,17 +397,17 @@ export function parseMobileMoneySms(sms: string, now: Date): ParsedOperation[] {
   const ops: ParsedOperation[] = [];
 
   if (withdrawal && !received) {
-    ops.push({ kind: 'transfer', amount, ...common, toMethod: 'cash', label: `Retrait Mobile Money → caisse (${PAYMENT_METHOD_LABEL[provider ?? 'orange_money']})`, confidence: 92 });
+    ops.push({ kind: 'transfer', amount, ...common, toMethod: 'cash', label: `Retrait Mobile Money → caisse (${PAYMENT_METHOD_LABEL[provider ?? 'orange_money']})` });
   } else if (received) {
-    ops.push({ kind: 'sale', amount, ...common, natureAccountCode: '7011', label: `Encaissement ${PAYMENT_METHOD_LABEL[provider ?? 'orange_money']}${counterparty ? ` de ${counterparty}` : ''}`, confidence: 82,
+    ops.push({ kind: 'sale', amount, ...common, natureAccountCode: '7011', label: `Encaissement ${PAYMENT_METHOD_LABEL[provider ?? 'orange_money']}${counterparty ? ` de ${counterparty}` : ''}`,
       explanation: undefined });
   } else if (airtime) {
-    ops.push({ kind: 'expense', amount, ...common, natureAccountCode: '6271', label: `Achat crédit / forfait (${PAYMENT_METHOD_LABEL[provider ?? 'orange_money']})`, confidence: 92 });
+    ops.push({ kind: 'expense', amount, ...common, natureAccountCode: '6271', label: `Achat crédit / forfait (${PAYMENT_METHOD_LABEL[provider ?? 'orange_money']})` });
   } else {
-    ops.push({ kind: 'expense', amount, ...common, natureAccountCode: '6011', label: `Paiement Mobile Money${counterparty ? ` à ${counterparty}` : ''}`, confidence: 72 });
+    ops.push({ kind: 'expense', amount, ...common, natureAccountCode: '6011', label: `Paiement Mobile Money${counterparty ? ` à ${counterparty}` : ''}` });
   }
   if (fee > 0) {
-    ops.push({ kind: 'bank_fee', amount: fee, paymentMethod: provider, settlement: 'paid', label: `Frais ${PAYMENT_METHOD_LABEL[provider ?? 'orange_money']}`, confidence: 95, date, pieceRef, sourceText: sms });
+    ops.push({ kind: 'bank_fee', amount: fee, paymentMethod: provider, settlement: 'paid', label: `Frais ${PAYMENT_METHOD_LABEL[provider ?? 'orange_money']}`, date, pieceRef, sourceText: sms });
   }
   return ops;
 }

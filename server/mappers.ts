@@ -72,7 +72,6 @@ export function serializeAuditLog(row: any) {
     author: row.author,
     notes: row.notes ?? undefined,
     previousValue: row.previousValue ?? undefined,
-    confidenceScore: row.confidenceScore ?? undefined,
   };
 }
 
@@ -90,7 +89,6 @@ export function serializeEntry(row: any): JournalEntry {
     tvaAmount: Number(row.tvaAmount),
     clientDossierId: row.clientDossierId,
     status: row.status,
-    confidenceScore: row.confidenceScore,
     detectedAnomaly: row.detectedAnomaly ?? undefined,
     rawInput: row.rawInput,
     inputType: row.inputType,

@@ -9,6 +9,7 @@ import {
   AlertTriangle, 
   CheckSquare, 
   Square, 
+  MinusSquare,
   Edit3, 
   History, 
   Download, 
@@ -107,14 +108,12 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
     return matchesStatus && matchesSearch;
   });
 
-  // Select / Deselect All
-  const handleSelectAll = () => {
-    if (selectedIds.length === filteredEntries.length) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(filteredEntries.map(e => e.id));
-    }
-  };
+  // Sélection : ne compte que les lignes visibles (filtre + recherche) ; chaque bouton n'agit que sur les lignes concernées.
+  const selectedEntries = filteredEntries.filter(e => selectedIds.includes(e.id));
+  const allSelected = filteredEntries.length > 0 && selectedEntries.length === filteredEntries.length;
+  const toValidate = selectedEntries.filter(canValidateEntry).map(e => e.id);
+  const toSubmit = selectedEntries.filter(e => e.status === 'draft').map(e => e.id);
+  const handleSelectAll = () => setSelectedIds(allSelected ? [] : filteredEntries.map(e => e.id));
 
   const toggleSelectOne = (id: string) => {
     setSelectedIds(prev => 
@@ -177,7 +176,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
 
   // Export to CSV
   const exportCSV = () => {
-    const headers = ['Date', 'PieceRef', 'Libelle', 'CompteDebit', 'CompteCredit', 'Montant_FCFA', 'Statut', 'ConfianceIA'];
+    const headers = ['Date', 'PieceRef', 'Libelle', 'CompteDebit', 'CompteCredit', 'Montant_FCFA', 'Statut'];
     const rows = filteredEntries.map(e => [
       e.date,
       e.pieceRef,
@@ -185,8 +184,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
       e.debitAccountCode,
       e.creditAccountCode,
       e.amount,
-      e.status,
-      `${e.confidenceScore}%`
+      e.status
     ]);
 
     const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -214,18 +212,35 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* Batch Validation Button */}
-          {selectedIds.length > 0 && (
-            <button
-              onClick={() => {
-                onBatchValidate(selectedIds);
-                setSelectedIds([]);
-              }}
-              className="px-4 py-2 bg-gradient-to-r from-[#10B981] to-[#059669] text-white text-xs font-bold rounded-xl shadow-xs flex items-center gap-1.5 hover:from-[#059669] hover:to-[#047857] transition-all"
-            >
-              <CheckCircle2 className="w-4 h-4 text-white" />
-              <span>Valider la sélection ({selectedIds.length})</span>
-            </button>
+          {/* Actions sur la sélection */}
+          {selectedEntries.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 bg-[#F5F3FF] border border-[#DDD6FE] rounded-xl px-2.5 py-1.5">
+              <span className="text-xs font-bold text-[#1E084A]">{selectedEntries.length} sélectionnée{selectedEntries.length > 1 ? 's' : ''}</span>
+              {toSubmit.length > 0 && (
+                <button
+                  onClick={() => { toSubmit.forEach(id => onEntryAction('submit', id)); setSelectedIds([]); }}
+                  className="px-3 py-1.5 bg-white text-[#7024E3] text-xs font-bold rounded-lg border border-[#DDD6FE] hover:bg-[#EDE9FE] flex items-center gap-1.5"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Soumettre les brouillons ({toSubmit.length})</span>
+                </button>
+              )}
+              {toValidate.length > 0 && (
+                <button
+                  onClick={() => { onBatchValidate(toValidate); setSelectedIds([]); }}
+                  className="px-3 py-1.5 bg-gradient-to-r from-[#10B981] to-[#059669] text-white text-xs font-bold rounded-lg shadow-xs flex items-center gap-1.5 hover:from-[#059669] hover:to-[#047857]"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Valider ({toValidate.length})</span>
+                </button>
+              )}
+              {toSubmit.length === 0 && toValidate.length === 0 && (
+                <span className="text-[11px] text-[#7C709A]">Aucune action : écritures déjà validées ou annulées</span>
+              )}
+              <button onClick={() => setSelectedIds([])} className="text-[11px] font-bold text-[#7C709A] hover:text-[#1E084A] underline">
+                Désélectionner
+              </button>
+            </div>
           )}
 
           {/* Import Excel */}
@@ -384,9 +399,11 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
             <thead>
               <tr className="bg-[#1E084A] text-white border-b border-[#3B1578] uppercase font-mono text-[11px]">
                 <th className="p-3 text-center w-8">
-                  <button onClick={handleSelectAll} className="p-0.5">
-                    {selectedIds.length > 0 && selectedIds.length === filteredEntries.length ? (
+                  <button onClick={handleSelectAll} className="p-0.5" title={allSelected ? 'Tout désélectionner' : 'Tout sélectionner (lignes affichées)'}>
+                    {allSelected ? (
                       <CheckSquare className="w-4 h-4 text-[#A78BFA]" />
+                    ) : selectedEntries.length > 0 ? (
+                      <MinusSquare className="w-4 h-4 text-[#A78BFA]" />
                     ) : (
                       <Square className="w-4 h-4 text-[#7C709A]" />
                     )}
@@ -398,7 +415,6 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
                 <th className="p-3">Crédit (SYSCOHADA)</th>
                 <th className="p-3 text-right">Montant Débit</th>
                 <th className="p-3 text-right">Montant Crédit</th>
-                <th className="p-3 text-center">Confiance IA</th>
                 <th className="p-3 text-center">Statut</th>
                 <th className="p-3 text-right">Actions</th>
               </tr>
@@ -472,19 +488,6 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
                     {/* Montant Crédit */}
                     <td className="p-3 text-right font-tabular font-bold text-[#1E084A] whitespace-nowrap">
                       {entry.amount.toLocaleString('fr-FR')}
-                    </td>
-
-                    {/* Confiance IA */}
-                    <td className="p-3 text-center font-mono">
-                      <span className={`text-[12px] font-bold ${
-                        entry.confidenceScore >= 90 
-                          ? 'text-[#10B981]' 
-                          : entry.confidenceScore >= 75 
-                            ? 'text-[#F59E0B]' 
-                            : 'text-[#EF4444]'
-                      }`}>
-                        {entry.confidenceScore}%
-                      </span>
                     </td>
 
                     {/* Statut */}

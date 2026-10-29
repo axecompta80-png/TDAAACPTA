@@ -434,9 +434,6 @@ export const ConversationalAgent: React.FC<ConversationalAgentProps> = ({
                             <AlertTriangle className="w-3 h-3" /> Anomalie signalée
                           </span>
                         )}
-                        <span className="text-[11px] font-mono opacity-80">
-                          Confiance: {entry.confidenceScore}%
-                        </span>
                       </div>
 
                       <span className="font-tabular font-extrabold text-base tracking-tight text-[#A78BFA]">

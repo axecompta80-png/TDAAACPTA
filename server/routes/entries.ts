@@ -64,7 +64,6 @@ function entryCreateData(e: EntryInput, dossier: DossierRules, createdById: stri
     tvaAmount: e.tvaAmount,
     clientDossierId: dossierId,
     status: e.status as any,
-    confidenceScore: e.confidenceScore,
     detectedAnomaly: e.detectedAnomaly,
     rawInput: e.rawInput,
     inputType: e.inputType as any,
@@ -80,7 +79,6 @@ function entryCreateData(e: EntryInput, dossier: DossierRules, createdById: stri
         author: a.author,
         notes: a.notes,
         previousValue: a.previousValue,
-        confidenceScore: a.confidenceScore,
       })), ...(auto ? [autoValidationData(author, createdById).auditTrail.create] : [])],
     },
   };
@@ -162,7 +160,6 @@ router.post('/entries/:id/update', handler(async (req, res) => {
       amount: e.amount,
       tvaAmount: e.tvaAmount,
       status: e.status as any,
-      confidenceScore: e.confidenceScore,
       detectedAnomaly: e.detectedAnomaly ?? null,
       rawInput: e.rawInput,
       inputType: e.inputType as any,
@@ -184,7 +181,6 @@ router.post('/entries/:id/update', handler(async (req, res) => {
         author: a.author,
         notes: a.notes,
         previousValue: a.previousValue,
-        confidenceScore: a.confidenceScore,
       },
     });
   }

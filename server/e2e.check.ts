@@ -35,7 +35,7 @@ const companyBody = (name: string) => ({
 });
 const entryBody = (dossierId: string, pieceRef: string) => ({
   clientDossierId: dossierId, date: '2026-10-24', label: 'Vente comptant', pieceRef, debitAccountCode: '5711', creditAccountCode: '7011',
-  amount: 11800, tvaAmount: 1800, status: 'pending_review', confidenceScore: 60, inputType: 'manual', paymentMethod: 'cash',
+  amount: 11800, tvaAmount: 1800, status: 'pending_review', inputType: 'manual', paymentMethod: 'cash',
 });
 
 console.log('INSCRIPTION ET INFORMATIONS DE L\'ENTREPRISE');

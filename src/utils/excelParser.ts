@@ -17,7 +17,6 @@ export interface ParsedRowPreview {
   creditAccountLabel: string;
   paymentMethod: PaymentMethod;
   tvaAmount: number;
-  confidenceScore: number;
   anomaly?: string;
   originalRaw: Record<string, any>;
 }
@@ -136,7 +135,6 @@ export function classifyTransactionSmart(
   creditCode: string; 
   creditLabel: string; 
   paymentMethod: PaymentMethod; 
-  confidence: number;
   anomaly?: string;
 } {
   const norm = normalizeText(label);
@@ -155,15 +153,13 @@ export function classifyTransactionSmart(
       debitLabel: deb ? deb.label : `Compte ${explicitDebit}`,
       creditCode: explicitCredit,
       creditLabel: cred ? cred.label : `Compte ${explicitCredit}`,
-      paymentMethod: method,
-      confidence: 96
+      paymentMethod: method
     };
   }
 
   // Rule-based classification based on African Francophone business context
   let debitCode = '6011';
   let creditCode = treasuryCode;
-  let confidence = 88;
   let anomaly: string | undefined = undefined;
 
   // 1. Sales / Ventes / Encaissments
@@ -179,7 +175,6 @@ export function classifyTransactionSmart(
   ) {
     debitCode = treasuryCode; // Trésorerie reçoit
     creditCode = norm.includes('service') || norm.includes('prestation') || norm.includes('consulting') ? '7061' : '7011';
-    confidence = 94;
   }
   // 2. Achats de marchandises & matières
   else if (
@@ -195,63 +190,52 @@ export function classifyTransactionSmart(
   ) {
     debitCode = norm.includes('matiere') ? '6021' : '6011';
     creditCode = treasuryCode;
-    confidence = 92;
   }
   // 3. Electricité / Eau
   else if (norm.includes('electricite') || norm.includes('cie') || norm.includes('sbee') || norm.includes('senelec') || norm.includes('eneo')) {
     debitCode = '6051';
     creditCode = treasuryCode;
-    confidence = 95;
   } else if (norm.includes('eau') || norm.includes('sodeci') || norm.includes('soneb') || norm.includes('sde') || norm.includes('camwater')) {
     debitCode = '6052';
     creditCode = treasuryCode;
-    confidence = 95;
   }
   // 4. Carburant et transport
   else if (norm.includes('carburant') || norm.includes('essence') || norm.includes('gasoil') || norm.includes('totalenergies') || norm.includes('shell')) {
     debitCode = '6053';
     creditCode = treasuryCode;
-    confidence = 93;
   } else if (norm.includes('transport') || norm.includes('livraison') || norm.includes('taxi') || norm.includes('peage') || norm.includes('fret')) {
     debitCode = '6121';
     creditCode = treasuryCode;
-    confidence = 91;
   }
   // 5. Loyer
   else if (norm.includes('loyer') || norm.includes('bail') || norm.includes('locat')) {
     debitCode = '6221';
     creditCode = treasuryCode;
-    confidence = 96;
   }
   // 6. Télécommunications / Internet
   else if (norm.includes('telephone') || norm.includes('internet') || norm.includes('forfait') || norm.includes('connexion') || norm.includes('canalbox')) {
     debitCode = '6271';
     creditCode = treasuryCode;
-    confidence = 94;
   }
   // 7. Salaires & Avances
   else if (norm.includes('salaire') || norm.includes('paie') || norm.includes('avance sur salaire') || norm.includes('gardien') || norm.includes('personnel')) {
     debitCode = '6411';
     creditCode = treasuryCode;
-    confidence = 93;
   }
   // 8. Frais bancaires / commissions
   else if (norm.includes('frais de tenue') || norm.includes('commission') || norm.includes('agios') || norm.includes('frais retrait')) {
     debitCode = '6311';
     creditCode = treasuryCode;
-    confidence = 92;
   }
   // 9. Immobilisations
   else if (norm.includes('ordinateur') || norm.includes('laptop') || norm.includes('imprimante') || norm.includes('climatiseur') || norm.includes('moto') || norm.includes('vehicule')) {
     debitCode = norm.includes('moto') || norm.includes('vehicule') ? '215' : '244';
     creditCode = treasuryCode;
-    confidence = 89;
   }
   // Default general expense
   else {
     debitCode = '6011';
     creditCode = treasuryCode;
-    confidence = 82;
     anomaly = 'Classification par défaut : vérifier l’intitulé de la dépense';
   }
 
@@ -261,7 +245,6 @@ export function classifyTransactionSmart(
     const isTreasury = (c?: string) => !!c && c.startsWith('5');
     debitCode = explicitDebit || (isTreasury(explicitCredit) ? debitCode : treasuryCode);
     creditCode = explicitCredit || (isTreasury(explicitDebit) ? creditCode : treasuryCode);
-    confidence = 90;
     anomaly = debitCode === creditCode ? 'Compte au débit identique au compte au crédit : à corriger' : undefined;
   }
 
@@ -279,7 +262,6 @@ export function classifyTransactionSmart(
     creditCode,
     creditLabel: credAcc ? credAcc.label : `Compte ${creditCode}`,
     paymentMethod: method,
-    confidence,
     anomaly
   };
 }
