@@ -106,7 +106,10 @@ router.post('/import-backup', handler(async (req, res) => {
       invoiceId: invoiceId && invoiceDossier.get(invoiceId) === dossierId ? invoiceId : null,
       reversalOfId: optionalId(raw?.reversalOfId),
     });
-    e.lines.forEach((l, position) => lineRows.push({ entryId: id!, position, accountCode: l.accountCode, label: l.label, debit: l.debit, credit: l.credit }));
+    e.lines.forEach((l, position) => lineRows.push({
+      entryId: id!, position, accountCode: l.accountCode, label: l.label, debit: l.debit, credit: l.credit,
+      reconciledOn: Array.isArray(raw?.lines) ? optionalDate(raw.lines[position]?.reconciledOn) : null,
+    }));
     for (const a of e.auditTrail) {
       auditRows.push({
         id: a.id,
@@ -144,10 +147,11 @@ router.post('/import-backup', handler(async (req, res) => {
     });
   }
 
-  // 3. Remplacement en une transaction. Supprimer une écriture supprime ses paiements de facture :
-  //    on les garde de côté et on les recrée pour les écritures restaurées.
+  // 3. Remplacement en une transaction. Supprimer une écriture supprime ses paiements de facture et
+  //    ses pièces jointes (absentes de la sauvegarde) : on les garde de côté et on les recrée pour les écritures restaurées.
   await prisma.$transaction(async tx => {
     const payments = await tx.invoicePayment.findMany({ where: { entry: { clientDossierId: { in: dossierIds } } } });
+    const attachments = await tx.attachment.findMany({ where: { entry: { clientDossierId: { in: dossierIds } } } });
     await tx.appNotification.deleteMany({ where: { dossierId: { in: dossierIds } } });
     await tx.journalEntry.deleteMany({ where: { clientDossierId: { in: dossierIds } } });
     for (const [id, data] of restorable) await tx.clientDossier.update({ where: { id }, data: dossierData(data) });
@@ -160,6 +164,8 @@ router.post('/import-backup', handler(async (req, res) => {
     await tx.auditLog.createMany({ data: auditRows, skipDuplicates: true });
     const kept = payments.filter(p => usedIds.has(p.entryId));
     if (kept.length) await tx.invoicePayment.createMany({ data: kept });
+    const keptFiles = attachments.filter(a => usedIds.has(a.entryId));
+    if (keptFiles.length) await tx.attachment.createMany({ data: keptFiles });
   }, { timeout: 120_000, maxWait: 10_000 });
 
   res.json(await buildBootstrapPayload(req));

@@ -73,11 +73,13 @@ function serializeEntry(row) {
     journal: row.journal,
     number: row.number,
     lines: [...row.lines ?? []].sort((a, b) => a.position - b.position).map((l) => ({
+      id: l.id,
       accountCode: l.accountCode,
       accountLabel: l.account?.label,
       label: l.label ?? void 0,
       debit: Number(l.debit),
-      credit: Number(l.credit)
+      credit: Number(l.credit),
+      reconciledOn: l.reconciledOn?.toISOString().slice(0, 10) ?? void 0
     })),
     amount: Number(row.amount),
     clientDossierId: row.clientDossierId,
@@ -93,6 +95,7 @@ function serializeEntry(row) {
     validatedById: row.validatedById ?? void 0,
     validatedAt: row.validatedAt?.toISOString() ?? void 0,
     invoiceId: row.invoiceId ?? void 0,
+    attachments: (row.attachments ?? []).map((a) => ({ id: a.id, filename: a.filename, mimeType: a.mimeType, size: a.size })),
     reversalOfId: row.reversalOfId ?? void 0
   };
 }
@@ -179,6 +182,18 @@ function serializePlatformSettings(row) {
     notifyOnMobileMoneySync: row.notifyOnMobileMoneySync
   };
 }
+function serializeAsset(a) {
+  return {
+    id: a.id,
+    clientDossierId: a.clientDossierId,
+    label: a.label,
+    accountCode: a.accountCode,
+    acquisitionDate: a.acquisitionDate.toISOString().slice(0, 10),
+    cost: Number(a.cost),
+    durationYears: a.durationYears,
+    depreciatedThrough: a.depreciatedThrough ?? void 0
+  };
+}
 var REGIME_FISCAL_TO_DB, REGIME_FISCAL_FROM_DB, AI_MODEL_TO_DB, AI_MODEL_FROM_DB, day;
 var init_mappers = __esm({
   "server/mappers.ts"() {
@@ -227,12 +242,14 @@ var init_syscohadaPlan = __esm({
       { code: "215", label: "Mat\xE9riel de transport (camions, tricycles)", classNumber: 2, category: "bilan_actif" },
       { code: "241", label: "Mat\xE9riel et outillage industriel", classNumber: 2, category: "bilan_actif" },
       { code: "244", label: "Mat\xE9riel de bureau et informatique", classNumber: 2, category: "bilan_actif" },
+      { code: "231", label: "B\xE2timents (boutique, entrep\xF4t, bureaux)", classNumber: 2, category: "bilan_actif" },
       { code: "245", label: "Mobilier de bureau et \xE9tals", classNumber: 2, category: "bilan_actif" },
-      // Classe 3 : Stocks
+      { code: "2831", label: "Amortissements des b\xE2timents", classNumber: 2, category: "bilan_actif" },
       { code: "2815", label: "Amortissements du mat\xE9riel de transport", classNumber: 2, category: "bilan_actif" },
       { code: "2841", label: "Amortissements du mat\xE9riel et outillage", classNumber: 2, category: "bilan_actif" },
       { code: "2844", label: "Amortissements du mat\xE9riel de bureau et informatique", classNumber: 2, category: "bilan_actif" },
       { code: "2845", label: "Amortissements du mobilier de bureau et \xE9tals", classNumber: 2, category: "bilan_actif" },
+      // Classe 3 : Stocks
       { code: "311", label: "Marchandises (stocks g\xE9n\xE9raux)", classNumber: 3, category: "bilan_actif" },
       { code: "321", label: "Mati\xE8res premi\xE8res et fournitures li\xE9es", classNumber: 3, category: "bilan_actif" },
       // Classe 4 : Comptes de Tiers
@@ -250,6 +267,7 @@ var init_syscohadaPlan = __esm({
       { code: "4449", label: "\xC9tat, cr\xE9dit de TVA \xE0 reporter", classNumber: 4, category: "bilan_actif" },
       { code: "4471", label: "\xC9tat, Imp\xF4ts sur les b\xE9n\xE9fices & acomptes", classNumber: 4, category: "bilan_passif" },
       { code: "4711", label: "Compte d\u2019attente cr\xE9diteur/d\xE9biteur", classNumber: 4, category: "bilan_actif" },
+      { code: "4812", label: "Fournisseurs d\u2019investissements (achats d\u2019immobilisations)", classNumber: 4, category: "bilan_passif" },
       // Classe 5 : Trésorerie
       { code: "5211", label: "Banque locale (Ecobank, Coris, SG, UBA)", classNumber: 5, category: "tresorerie" },
       { code: "5261", label: "Portefeuille Orange Money Entreprise", classNumber: 5, category: "tresorerie" },
@@ -391,7 +409,7 @@ import express from "express";
 import cookieParser from "cookie-parser";
 
 // server/routes/index.ts
-import { Router as Router9 } from "express";
+import { Router as Router11 } from "express";
 
 // server/http.ts
 function handler(fn) {
@@ -400,7 +418,7 @@ function handler(fn) {
 
 // server/routes/recurring.ts
 init_db();
-import { Router as Router2 } from "express";
+import { Router as Router3 } from "express";
 
 // server/access.ts
 init_db();
@@ -727,7 +745,7 @@ function validateEntryInput(body, options = {}) {
 var NOTIFICATION_TYPES = ["info", "success", "warning", "error"];
 var NOTIFICATION_CATEGORIES = ["compta", "fiscal", "tresorerie", "ia", "system"];
 var STARTUP_VIEWS = ["simplified", "expert"];
-var EXPERT_TABS = ["portfolio", "journal", "invoices", "accounts", "ledger", "financials", "tax"];
+var EXPERT_TABS = ["portfolio", "journal", "invoices", "accounts", "ledger", "financials", "tax", "bank", "assets"];
 function validateNotificationInput(body) {
   const b = body ?? {};
   const title = text(b.title, 160);
@@ -874,17 +892,128 @@ function optionalReason(body) {
 // server/routes/entries.ts
 init_db();
 init_mappers();
-import { Router } from "express";
+import { Router as Router2 } from "express";
 
 // server/routes/bootstrap.ts
 init_db();
 init_mappers();
-var ENTRY_INCLUDE = { auditTrail: true, lines: { include: { account: { select: { label: true } } } } };
+
+// server/routes/notifications.ts
+init_db();
+init_mappers();
+import { Router } from "express";
+
+// src/utils/fiscalCalendar.ts
+var pad = (n) => String(n).padStart(2, "0");
+var lastDay = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+var MONTHS = ["janvier", "f\xE9vrier", "mars", "avril", "mai", "juin", "juillet", "ao\xFBt", "septembre", "octobre", "novembre", "d\xE9cembre"];
+function fiscalDeadlines(years, lockedUntil) {
+  const out = [];
+  for (const y of years) {
+    for (let m = 1; m <= 12; m++) {
+      const periodEnd2 = `${y}-${pad(m)}-${pad(lastDay(y, m))}`;
+      const due = m === 12 ? `${y + 1}-01-15` : `${y}-${pad(m + 1)}-15`;
+      out.push({ key: `tva-${y}-${pad(m)}`, label: `TVA de ${MONTHS[m - 1]} ${y}`, due, periodEnd: periodEnd2, done: isLocked(periodEnd2, lockedUntil) });
+    }
+    const periodEnd = `${y}-12-31`;
+    out.push({ key: `dsf-${y}`, label: `\xC9tats financiers et DSF ${y}`, due: `${y + 1}-04-30`, periodEnd, done: isLocked(periodEnd, lockedUntil) });
+  }
+  return out.sort((a, b) => a.due.localeCompare(b.due));
+}
+function deadlinesToRemind(today, lockedUntil) {
+  const y = Number(today.slice(0, 4));
+  const shift = (days) => new Date(Date.parse(today) + days * 864e5).toISOString().slice(0, 10);
+  const from = shift(-30), to = shift(7);
+  return fiscalDeadlines([y - 1, y], lockedUntil).filter((d) => !d.done && d.due >= from && d.due <= to);
+}
+
+// server/routes/notifications.ts
+var router = Router();
+var fr = (d) => d.split("-").reverse().join("/");
+async function createDeadlineReminders(req) {
+  const dossiers = await prisma.clientDossier.findMany({
+    where: dossierScopeWhere(req),
+    select: { id: true, lockedUntil: true, regimeFiscal: true, createdAt: true, settings: { select: { notifyOnTaxDeadline: true } } }
+  });
+  const firsts = await prisma.journalEntry.groupBy({ by: ["clientDossierId"], where: { clientDossierId: { in: dossiers.map((d) => d.id) } }, _min: { date: true } });
+  const startOf = (d) => {
+    const first = firsts.find((f) => f.clientDossierId === d.id)?._min.date;
+    return (first && first < d.createdAt ? first : d.createdAt).toISOString().slice(0, 7);
+  };
+  const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  const rows = dossiers.filter((d) => d.settings?.notifyOnTaxDeadline ?? true).flatMap((d) => deadlinesToRemind(today, d.lockedUntil?.toISOString().slice(0, 10)).filter((x) => x.periodEnd.slice(0, 7) >= startOf(d)).filter((x) => d.regimeFiscal !== "SYNTHETIQUE_FORFAIT" || !x.key.startsWith("tva")).map((x) => ({
+    id: `echeance-${d.id}-${x.key}`,
+    title: x.due < today ? `En retard : ${x.label}` : `\xC9ch\xE9ance le ${fr(x.due)} : ${x.label}`,
+    message: x.due < today ? `La date limite du ${fr(x.due)} est pass\xE9e. D\xE9posez la d\xE9claration puis marquez la p\xE9riode d\xE9clar\xE9e.` : `\xC0 d\xE9poser avant le ${fr(x.due)}. Une fois d\xE9clar\xE9e, marquez la p\xE9riode d\xE9clar\xE9e pour la bloquer.`,
+    type: x.due < today ? "warning" : "info",
+    category: "fiscal",
+    dossierId: d.id,
+    actionLabel: "Ouvrir la fiscalit\xE9",
+    actionMode: "expert",
+    actionExpertTab: "tax"
+  })));
+  if (rows.length) await prisma.appNotification.createMany({ data: rows, skipDuplicates: true });
+}
+router.post("/notifications", handler(async (req, res) => {
+  const n = unwrap(validateNotificationInput(req.body));
+  if (n.dossierId) {
+    const dossier = await findAccessibleDossier(req, n.dossierId);
+    if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
+  }
+  const created = await prisma.appNotification.create({
+    data: {
+      id: n.id,
+      title: n.title,
+      message: n.message,
+      type: n.type,
+      category: n.category,
+      read: n.read,
+      dossierId: n.dossierId,
+      actionLabel: n.actionLabel,
+      actionMode: n.actionMode,
+      actionExpertTab: n.actionExpertTab
+    }
+  });
+  res.status(201).json(serializeNotification(created));
+}));
+router.post("/notifications/read-all", handler(async (req, res) => {
+  await prisma.appNotification.updateMany({ where: notificationScopeWhere(req), data: { read: true } });
+  res.status(204).end();
+}));
+router.post("/notifications/:id/read", handler(async (req, res) => {
+  const id = identifier(req.params.id);
+  if (!id) return res.status(400).json({ error: "Identifiant de notification invalide." });
+  const scoped = await prisma.appNotification.findFirst({ where: { id, ...notificationScopeWhere(req) } });
+  if (!scoped) return res.status(404).json({ error: "Notification introuvable." });
+  const updated = await prisma.appNotification.update({ where: { id }, data: { read: true } });
+  res.json(serializeNotification(updated));
+}));
+router.post("/notifications/:id/delete", handler(async (req, res) => {
+  const id = identifier(req.params.id);
+  if (!id) return res.status(400).json({ error: "Identifiant de notification invalide." });
+  const scoped = await prisma.appNotification.findFirst({ where: { id, ...notificationScopeWhere(req) } });
+  if (!scoped) return res.status(404).json({ error: "Notification introuvable." });
+  await prisma.appNotification.delete({ where: { id } });
+  res.status(204).end();
+}));
+router.post("/notifications/clear", handler(async (req, res) => {
+  await prisma.appNotification.deleteMany({ where: notificationScopeWhere(req) });
+  res.status(204).end();
+}));
+var notifications_default = router;
+
+// server/routes/bootstrap.ts
+var ENTRY_INCLUDE = {
+  auditTrail: true,
+  lines: { include: { account: { select: { label: true } } } },
+  attachments: { select: { id: true, filename: true, mimeType: true, size: true } }
+};
 var DOSSIER_INCLUDE = { owner: { select: { name: true } } };
 async function buildBootstrapPayload(req) {
   const dossierScope = dossierScopeWhere(req);
   await generateDueRecurring(req);
-  const [dossierRows, directoryRows, entryRows, notificationRows, settingsRows, accountRows, invoiceRows, recurringRows] = await Promise.all([
+  await createDeadlineReminders(req);
+  const [dossierRows, directoryRows, entryRows, notificationRows, settingsRows, accountRows, invoiceRows, recurringRows, assetRows] = await Promise.all([
     prisma.clientDossier.findMany({
       where: dossierScope,
       include: DOSSIER_INCLUDE,
@@ -912,7 +1041,8 @@ async function buildBootstrapPayload(req) {
       include: { lines: true, payments: true },
       orderBy: { number: "desc" }
     }),
-    prisma.recurringEntry.findMany({ where: { active: true, clientDossier: dossierScope }, orderBy: { nextDate: "asc" } })
+    prisma.recurringEntry.findMany({ where: { active: true, clientDossier: dossierScope }, orderBy: { nextDate: "asc" } }),
+    prisma.fixedAsset.findMany({ where: { clientDossier: dossierScope }, orderBy: { acquisitionDate: "asc" } })
   ]);
   return {
     dossiers: dossierRows.map(serializeDossier),
@@ -922,12 +1052,13 @@ async function buildBootstrapPayload(req) {
     settingsByDossier: Object.fromEntries(settingsRows.map((r) => [r.dossierId, serializePlatformSettings(r)])),
     accounts: accountRows.map(serializeAccount),
     invoices: invoiceRows.map(serializeInvoice),
-    recurring: recurringRows.map(serializeRecurring)
+    recurring: recurringRows.map(serializeRecurring),
+    assets: assetRows.map(serializeAsset)
   };
 }
 
 // server/routes/entries.ts
-var router = Router();
+var router2 = Router2();
 var EDITABLE = ["draft", "pending_review", "anomaly"];
 async function assertAccountsUsable(codes, dossierId) {
   const unique = [...new Set(codes)];
@@ -939,11 +1070,11 @@ async function assertAccountsUsable(codes, dossierId) {
   const missing = unique.filter((c) => !known.has(c));
   return missing.length ? `Compte inconnu ou inactif pour ce dossier : ${missing.join(", ")}.` : null;
 }
-var fr = (d) => d.split("-").reverse().join("/");
+var fr2 = (d) => d.split("-").reverse().join("/");
 function lockError(dossier, date) {
   const until = dossier.lockedUntil?.toISOString().slice(0, 10);
   const day2 = typeof date === "string" ? date : date.toISOString().slice(0, 10);
-  return isLocked(day2, until) ? `P\xE9riode bloqu\xE9e jusqu'au ${fr(until)} (d\xE9clar\xE9e ou cl\xF4tur\xE9e) : aucune \xE9criture ne peut y \xEAtre ajout\xE9e ou modifi\xE9e. Pour corriger, passez une contre-passation \xE0 une date ult\xE9rieure.` : null;
+  return isLocked(day2, until) ? `P\xE9riode bloqu\xE9e jusqu'au ${fr2(until)} (d\xE9clar\xE9e ou cl\xF4tur\xE9e) : aucune \xE9criture ne peut y \xEAtre ajout\xE9e ou modifi\xE9e. Pour corriger, passez une contre-passation \xE0 une date ult\xE9rieure.` : null;
 }
 async function dossierOf(id) {
   return prisma.clientDossier.findUniqueOrThrow({ where: { id }, select: { id: true, lockedUntil: true } });
@@ -1019,7 +1150,7 @@ function entryCreateData(e, dossierId, number, createdById, author) {
     }
   };
 }
-router.post("/entries", handler(async (req, res) => {
+router2.post("/entries", handler(async (req, res) => {
   const dossierId = identifier((req.body ?? {}).clientDossierId);
   if (!dossierId) return res.status(400).json({ error: "Dossier comptable invalide." });
   const dossier = await findAccessibleDossier(req, dossierId);
@@ -1036,7 +1167,7 @@ router.post("/entries", handler(async (req, res) => {
   }));
   res.status(201).json(serializeEntry(created));
 }));
-router.post("/entries/import", handler(async (req, res) => {
+router2.post("/entries/import", handler(async (req, res) => {
   const list = Array.isArray((req.body ?? {}).entries) ? req.body.entries : [];
   if (list.length === 0) return res.status(400).json({ error: "Aucune \xE9criture \xE0 importer." });
   if (list.length > 5e3) return res.status(400).json({ error: "Import limit\xE9 \xE0 5000 \xE9critures par op\xE9ration." });
@@ -1066,7 +1197,7 @@ router.post("/entries/import", handler(async (req, res) => {
   }, { timeout: 12e4, maxWait: 1e4 }));
   res.status(201).json(created.map(serializeEntry));
 }));
-router.post("/entries/:id/update", handler(async (req, res) => {
+router2.post("/entries/:id/update", handler(async (req, res) => {
   const id = identifier(req.params.id);
   if (!id) return res.status(400).json({ error: "Identifiant d'\xE9criture invalide." });
   const existing = await findAccessibleEntry(req, id);
@@ -1129,7 +1260,7 @@ router.post("/entries/:id/update", handler(async (req, res) => {
   const fresh = await prisma.journalEntry.findUniqueOrThrow({ where: { id }, include: ENTRY_INCLUDE });
   res.json(serializeEntry(fresh));
 }));
-router.post("/entries/:id/submit", handler(async (req, res) => {
+router2.post("/entries/:id/submit", handler(async (req, res) => {
   const id = identifier(req.params.id);
   const existing = id ? await findAccessibleEntry(req, id) : null;
   if (!existing) return res.status(404).json({ error: "\xC9criture introuvable." });
@@ -1144,7 +1275,7 @@ router.post("/entries/:id/submit", handler(async (req, res) => {
   });
   res.json(serializeEntry(row));
 }));
-router.post("/entries/batch-validate", handler(async (req, res) => {
+router2.post("/entries/batch-validate", handler(async (req, res) => {
   const user = getAuthUser(req);
   const rawIds = Array.isArray((req.body ?? {}).ids) ? req.body.ids : [];
   const ids = rawIds.map(identifier).filter((v) => Boolean(v));
@@ -1182,7 +1313,7 @@ router.post("/entries/batch-validate", handler(async (req, res) => {
   const rows = await prisma.journalEntry.findMany({ where: { id: { in: validatedIds } }, include: ENTRY_INCLUDE });
   res.json({ validated: rows.map(serializeEntry), refused });
 }));
-router.post("/entries/:id/unvalidate", handler(async (req, res) => {
+router2.post("/entries/:id/unvalidate", handler(async (req, res) => {
   const id = identifier(req.params.id);
   const existing = id ? await findAccessibleEntry(req, id) : null;
   if (!existing) return res.status(404).json({ error: "\xC9criture introuvable." });
@@ -1202,7 +1333,7 @@ router.post("/entries/:id/unvalidate", handler(async (req, res) => {
   });
   res.json(serializeEntry(row));
 }));
-router.post("/entries/:id/cancel", handler(async (req, res) => {
+router2.post("/entries/:id/cancel", handler(async (req, res) => {
   const id = identifier(req.params.id);
   const existing = id ? await findAccessibleEntry(req, id) : null;
   if (!existing) return res.status(404).json({ error: "\xC9criture introuvable." });
@@ -1224,7 +1355,7 @@ router.post("/entries/:id/cancel", handler(async (req, res) => {
   ]);
   res.json(serializeEntry(row));
 }));
-router.post("/entries/:id/reverse", handler(async (req, res) => {
+router2.post("/entries/:id/reverse", handler(async (req, res) => {
   const id = identifier(req.params.id);
   const existing = id ? await prisma.journalEntry.findFirst({ where: { id }, include: { lines: true, reversals: true } }) : null;
   if (!existing || !await findAccessibleEntry(req, existing.id)) return res.status(404).json({ error: "\xC9criture introuvable." });
@@ -1244,7 +1375,7 @@ router.post("/entries/:id/reverse", handler(async (req, res) => {
   const reversal = await withNumberRetry(() => prisma.$transaction(async (tx) => {
     const number = await numberer(tx, existing.clientDossierId)(existing.journal);
     await tx.invoicePayment.deleteMany({ where: { entryId: existing.id } });
-    await tx.auditLog.create({ data: { journalEntryId: existing.id, action: "reversed", author, notes: reason ?? `Contre-pass\xE9e le ${fr(date)}.` } });
+    await tx.auditLog.create({ data: { journalEntryId: existing.id, action: "reversed", author, notes: reason ?? `Contre-pass\xE9e le ${fr2(date)}.` } });
     return tx.journalEntry.create({
       data: {
         date: new Date(date),
@@ -1259,7 +1390,7 @@ router.post("/entries/:id/reverse", handler(async (req, res) => {
         rawInput: label,
         inputType: "manual",
         paymentMethod: existing.paymentMethod,
-        explanationSimplified: `Annule l'\xE9criture ${existing.pieceRef} du ${fr(existing.date.toISOString().slice(0, 10))} en inversant le d\xE9bit et le cr\xE9dit.`,
+        explanationSimplified: `Annule l'\xE9criture ${existing.pieceRef} du ${fr2(existing.date.toISOString().slice(0, 10))} en inversant le d\xE9bit et le cr\xE9dit.`,
         createdById: user,
         validatedById: user,
         validatedAt: /* @__PURE__ */ new Date(),
@@ -1272,10 +1403,10 @@ router.post("/entries/:id/reverse", handler(async (req, res) => {
   const original = await prisma.journalEntry.findUniqueOrThrow({ where: { id: existing.id }, include: ENTRY_INCLUDE });
   res.status(201).json({ original: serializeEntry(original), reversal: serializeEntry(reversal) });
 }));
-var entries_default = router;
+var entries_default = router2;
 
 // server/routes/recurring.ts
-var router2 = Router2();
+var router3 = Router3();
 function serializeRecurring(r) {
   return {
     id: r.id,
@@ -1331,7 +1462,7 @@ async function generateDueRecurring(req) {
     await prisma.recurringEntry.update({ where: { id: r.id }, data: { nextDate: new Date(date) } });
   }
 }
-router2.post("/recurring", handler(async (req, res) => {
+router3.post("/recurring", handler(async (req, res) => {
   const b = req.body ?? {};
   const dossierId = identifier(b.clientDossierId);
   const dossier = dossierId ? await findAccessibleDossier(req, dossierId) : null;
@@ -1362,21 +1493,227 @@ router2.post("/recurring", handler(async (req, res) => {
   });
   res.status(201).json(serializeRecurring(row));
 }));
-router2.post("/recurring/:id/stop", handler(async (req, res) => {
+router3.post("/recurring/:id/stop", handler(async (req, res) => {
   const id = identifier(req.params.id);
   const row = id ? await prisma.recurringEntry.findUnique({ where: { id } }) : null;
   if (!row || !await findAccessibleDossier(req, row.clientDossierId)) return res.status(404).json({ error: "\xC9criture r\xE9currente introuvable." });
   const updated = await prisma.recurringEntry.update({ where: { id: row.id }, data: { active: false } });
   res.json(serializeRecurring(updated));
 }));
-var recurring_default = router2;
+var recurring_default = router3;
+
+// server/routes/attachments.ts
+init_db();
+import { Router as Router4 } from "express";
+var router4 = Router4();
+var MAX_ATTACHMENT_BYTES = 3 * 1024 * 1024;
+var ALLOWED = /^(application\/pdf|image\/(jpeg|png|webp)|text\/csv|application\/vnd\.openxmlformats-officedocument\.(spreadsheetml\.sheet|wordprocessingml\.document)|application\/vnd\.ms-excel)$/;
+router4.post("/entries/:id/attachments", handler(async (req, res) => {
+  const id = identifier(req.params.id);
+  const entry = id ? await findAccessibleEntry(req, id) : null;
+  if (!entry) return res.status(404).json({ error: "\xC9criture introuvable." });
+  const b = req.body ?? {};
+  const filename = optionalText(b.filename, 200)?.replace(/[\\/\r\n"]/g, "_");
+  const mimeType = String(b.mimeType ?? "");
+  if (!filename) return res.status(400).json({ error: "Nom de fichier requis." });
+  if (!ALLOWED.test(mimeType)) return res.status(400).json({ error: "Format non pris en charge (PDF, image, Excel, CSV ou Word)." });
+  const data = typeof b.data === "string" ? Buffer.from(b.data.replace(/^data:[^;]+;base64,/, ""), "base64") : null;
+  if (!data?.length) return res.status(400).json({ error: "Fichier vide." });
+  if (data.length > MAX_ATTACHMENT_BYTES) return res.status(413).json({ error: "Fichier trop volumineux (3 Mo maximum)." });
+  const row = await prisma.attachment.create({
+    data: { entryId: entry.id, filename, mimeType, size: data.length, data, createdById: getAuthUser(req).sub },
+    select: { id: true, filename: true, mimeType: true, size: true }
+  });
+  res.status(201).json(row);
+}));
+router4.get("/attachments/:id", handler(async (req, res) => {
+  const id = identifier(req.params.id);
+  const row = id ? await prisma.attachment.findUnique({ where: { id } }) : null;
+  if (!row || !await findAccessibleEntry(req, row.entryId)) return res.status(404).json({ error: "Pi\xE8ce introuvable." });
+  res.setHeader("Content-Type", row.mimeType);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(row.filename)}"; filename*=UTF-8''${encodeURIComponent(row.filename)}`);
+  res.send(Buffer.from(row.data));
+}));
+router4.post("/attachments/:id/delete", handler(async (req, res) => {
+  const id = identifier(req.params.id);
+  const row = id ? await prisma.attachment.findUnique({ where: { id }, select: { id: true, entryId: true } }) : null;
+  const entry = row ? await findAccessibleEntry(req, row.entryId) : null;
+  if (!row || !entry) return res.status(404).json({ error: "Pi\xE8ce introuvable." });
+  const dossier = await prisma.clientDossier.findUniqueOrThrow({ where: { id: entry.clientDossierId }, select: { lockedUntil: true } });
+  const locked = lockError(dossier, entry.date);
+  if (locked) return res.status(409).json({ error: locked });
+  await prisma.attachment.delete({ where: { id: row.id } });
+  res.status(204).end();
+}));
+router4.post("/lines/reconcile", handler(async (req, res) => {
+  const b = req.body ?? {};
+  const dossierId = identifier(b.clientDossierId);
+  const dossier = dossierId ? await findAccessibleDossier(req, dossierId) : null;
+  if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
+  const ids = (Array.isArray(b.lineIds) ? b.lineIds : []).map(identifier).filter(Boolean).slice(0, 5e3);
+  const date = b.date === null ? null : isoDate(b.date);
+  if (!ids.length) return res.status(400).json({ error: "Aucune ligne s\xE9lectionn\xE9e." });
+  if (b.date !== null && !date) return res.status(400).json({ error: "Date du relev\xE9 invalide." });
+  const where = { id: { in: ids }, accountCode: { startsWith: "5" }, entry: { clientDossierId: dossier.id, status: "validated" } };
+  if (await prisma.journalLine.count({ where }) !== ids.length) {
+    return res.status(400).json({ error: "Seules les lignes de tr\xE9sorerie (comptes 5) d\u2019\xE9critures valid\xE9es du dossier se pointent." });
+  }
+  await prisma.journalLine.updateMany({ where, data: { reconciledOn: date ? new Date(date) : null } });
+  res.json({ lineIds: ids, reconciledOn: date ?? void 0 });
+}));
+var attachments_default = router4;
+
+// server/routes/assets.ts
+init_db();
+init_mappers();
+import { Router as Router5 } from "express";
+
+// src/utils/assets.ts
+function depreciationSchedule(a) {
+  const rows = [];
+  if (!(a.cost > 0) || !(a.durationYears > 0)) return rows;
+  const annual = a.cost / a.durationYears;
+  const [y0, m, d] = a.acquisitionDate.split("-").map(Number);
+  const firstDays = (12 - m) * 30 + (30 - Math.min(d, 30) + 1);
+  let exact = 0, cumulative = 0;
+  for (let year = y0; cumulative < a.cost && year <= y0 + a.durationYears; year++) {
+    exact += year === y0 ? annual * firstDays / 360 : annual;
+    const amount = Math.min(a.cost, Math.round(exact)) - cumulative;
+    cumulative += amount;
+    rows.push({ year, amount, cumulative, net: a.cost - cumulative });
+  }
+  return rows;
+}
+function amortizationAccountFor(code, exists) {
+  for (let n = code.length; n >= 2; n--) {
+    const c = "28" + code.slice(1, n);
+    if (exists(c)) return c;
+  }
+  return void 0;
+}
+var DEPRECIATION_EXPENSE = "6811";
+
+// server/routes/assets.ts
+var router5 = Router5();
+async function amortAccount(code, dossierId) {
+  const rows = await prisma.syscohadaAccount.findMany({
+    where: { code: { startsWith: "28" }, active: true, OR: [{ dossierId: null }, { dossierId }] },
+    select: { code: true }
+  });
+  const known = new Set(rows.map((r) => r.code));
+  return amortizationAccountFor(code, (c) => known.has(c));
+}
+router5.post("/assets", handler(async (req, res) => {
+  const b = req.body ?? {};
+  const dossierId = identifier(b.clientDossierId);
+  const dossier = dossierId ? await findAccessibleDossier(req, dossierId) : null;
+  if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
+  const label = optionalText(b.label, 200);
+  const accountCode = String(b.accountCode ?? "").trim();
+  const acquisitionDate = isoDate(b.acquisitionDate);
+  const cost = Math.round(Number(b.cost) * 100) / 100;
+  const durationYears = Number(b.durationYears);
+  const depreciatedThrough = b.depreciatedThrough ? Number(b.depreciatedThrough) : null;
+  if (!label) return res.status(400).json({ error: "D\xE9signation requise." });
+  if (!/^2[1-7]\d*$/.test(accountCode)) return res.status(400).json({ error: "Compte d\u2019immobilisation attendu (classe 2, hors 28 et 29)." });
+  if (!acquisitionDate) return res.status(400).json({ error: "Date d\u2019acquisition invalide." });
+  if (!(cost > 0)) return res.status(400).json({ error: "Co\xFBt d\u2019acquisition invalide." });
+  if (!Number.isInteger(durationYears) || durationYears < 1 || durationYears > 50) return res.status(400).json({ error: "Dur\xE9e d\u2019amortissement : 1 \xE0 50 ans." });
+  if (depreciatedThrough !== null && (!Number.isInteger(depreciatedThrough) || depreciatedThrough < Number(acquisitionDate.slice(0, 4)))) {
+    return res.status(400).json({ error: "Exercice des dotations d\xE9j\xE0 pass\xE9es invalide." });
+  }
+  const err = await assertAccountsUsable([accountCode], dossier.id);
+  if (err) return res.status(400).json({ error: err });
+  if (!await amortAccount(accountCode, dossier.id)) {
+    return res.status(400).json({ error: `Aucun compte d\u2019amortissement 28\u2026 pour ${accountCode} : cr\xE9ez-le dans le plan comptable.` });
+  }
+  const row = await prisma.fixedAsset.create({
+    data: { clientDossierId: dossier.id, label, accountCode, acquisitionDate: new Date(acquisitionDate), cost, durationYears, depreciatedThrough }
+  });
+  res.status(201).json(serializeAsset(row));
+}));
+router5.post("/assets/:id/delete", handler(async (req, res) => {
+  const id = identifier(req.params.id);
+  const row = id ? await prisma.fixedAsset.findUnique({ where: { id } }) : null;
+  if (!row || !await findAccessibleDossier(req, row.clientDossierId)) return res.status(404).json({ error: "Immobilisation introuvable." });
+  if (row.depreciatedThrough !== null) return res.status(409).json({ error: "Des dotations ont d\xE9j\xE0 \xE9t\xE9 pass\xE9es : contre-passez-les avant de supprimer." });
+  await prisma.fixedAsset.delete({ where: { id: row.id } });
+  res.status(204).end();
+}));
+router5.post("/assets/depreciate", handler(async (req, res) => {
+  const b = req.body ?? {};
+  const dossierId = identifier(b.clientDossierId);
+  const dossier = dossierId ? await findAccessibleDossier(req, dossierId) : null;
+  if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
+  const year = Number(b.year);
+  if (!Number.isInteger(year) || year < 1990 || year > 2100) return res.status(400).json({ error: "Exercice invalide." });
+  const assets = await prisma.fixedAsset.findMany({ where: { clientDossierId: dossier.id } });
+  const todo = [];
+  for (const a of assets) {
+    const credit = await amortAccount(a.accountCode, dossier.id);
+    if (!credit) return res.status(400).json({ error: `Aucun compte d\u2019amortissement pour ${a.accountCode} (${a.label}).` });
+    const schedule = depreciationSchedule({ acquisitionDate: a.acquisitionDate.toISOString().slice(0, 10), cost: Number(a.cost), durationYears: a.durationYears });
+    for (const r of schedule) {
+      if (r.year > year || a.depreciatedThrough !== null && r.year <= a.depreciatedThrough || r.amount <= 0) continue;
+      const locked = lockError(dossier, `${r.year}-12-31`);
+      if (locked) return res.status(409).json({ error: `${a.label}, dotation ${r.year} : ${locked}` });
+      todo.push({ assetId: a.id, year: r.year, amount: r.amount, label: a.label, credit });
+    }
+  }
+  const err = await assertAccountsUsable([DEPRECIATION_EXPENSE, ...todo.map((t) => t.credit)], dossier.id);
+  if (todo.length && err) return res.status(400).json({ error: err });
+  const userId2 = getAuthUser(req).sub;
+  const author = await actorName(req);
+  const created = await withNumberRetry(() => prisma.$transaction(async (tx) => {
+    const next = numberer(tx, dossier.id);
+    const out = [];
+    for (const t of todo) {
+      const number = await next("OD");
+      const label = `Dotation aux amortissements ${t.year} \u2014 ${t.label}`.slice(0, 300);
+      out.push(await tx.journalEntry.create({
+        data: {
+          date: /* @__PURE__ */ new Date(`${t.year}-12-31`),
+          label,
+          pieceRef: defaultPieceRef("OD", number),
+          journal: "OD",
+          number,
+          amount: t.amount,
+          clientDossierId: dossier.id,
+          status: "validated",
+          validatedById: userId2,
+          validatedAt: /* @__PURE__ */ new Date(),
+          createdById: userId2,
+          rawInput: label,
+          inputType: "manual",
+          paymentMethod: "bank_transfer",
+          explanationSimplified: `Usure de l'ann\xE9e ${t.year} de \xAB ${t.label} \xBB, constat\xE9e en charge.`,
+          lines: linesCreate([
+            { accountCode: DEPRECIATION_EXPENSE, debit: t.amount, credit: 0 },
+            { accountCode: t.credit, debit: 0, credit: t.amount }
+          ]),
+          auditTrail: { create: { action: "auto_validated", author, notes: "Dotation g\xE9n\xE9r\xE9e depuis le registre des immobilisations." } }
+        },
+        include: ENTRY_INCLUDE
+      }));
+    }
+    await tx.fixedAsset.updateMany({
+      where: { clientDossierId: dossier.id, OR: [{ depreciatedThrough: null }, { depreciatedThrough: { lt: year } }] },
+      data: { depreciatedThrough: year }
+    });
+    return out;
+  }));
+  const fresh = await prisma.fixedAsset.findMany({ where: { clientDossierId: dossier.id }, orderBy: { acquisitionDate: "asc" } });
+  res.status(201).json({ entries: created.map(serializeEntry), assets: fresh.map(serializeAsset) });
+}));
+var assets_default = router5;
 
 // server/routes/dossiers.ts
 init_db();
 init_mappers();
-import { Router as Router3 } from "express";
+import { Router as Router6 } from "express";
 init_seedData();
-var router3 = Router3();
+var router6 = Router6();
 var dossierData = (d) => ({
   name: d.name,
   managerName: d.managerName,
@@ -1390,7 +1727,7 @@ var dossierData = (d) => ({
   currency: d.currency
 });
 var mainOnly = (res) => res.status(403).json({ error: "R\xE9serv\xE9 au compte principal de l'entreprise." });
-router3.get("/dossiers", handler(async (req, res) => {
+router6.get("/dossiers", handler(async (req, res) => {
   const rows = await prisma.clientDossier.findMany({
     where: dossierScopeWhere(req),
     include: DOSSIER_INCLUDE,
@@ -1398,7 +1735,7 @@ router3.get("/dossiers", handler(async (req, res) => {
   });
   res.json(rows.map(serializeDossier));
 }));
-router3.get("/dossiers/:id", handler(async (req, res) => {
+router6.get("/dossiers/:id", handler(async (req, res) => {
   const id = identifier(req.params.id);
   if (!id) return res.status(400).json({ error: "Identifiant de dossier invalide." });
   const dossier = await findAccessibleDossier(req, id);
@@ -1412,7 +1749,7 @@ router3.get("/dossiers/:id", handler(async (req, res) => {
   ]);
   res.json({ dossier: serializeDossier(full), entries: entryRows });
 }));
-router3.post("/company", handler(async (req, res) => {
+router6.post("/company", handler(async (req, res) => {
   if (!isMainAccount(req)) return mainOnly(res);
   const organizationId = getAuthUser(req).organizationId;
   if (await prisma.clientDossier.findFirst({ where: { organizationId, isMain: true } })) {
@@ -1427,7 +1764,7 @@ router3.post("/company", handler(async (req, res) => {
   });
   res.status(201).json(serializeDossier(created));
 }));
-router3.post("/dossiers", handler(async (req, res) => {
+router6.post("/dossiers", handler(async (req, res) => {
   if (!isMainAccount(req)) return mainOnly(res);
   const organizationId = getAuthUser(req).organizationId;
   const { name, ownerName } = req.body ?? {};
@@ -1445,7 +1782,7 @@ router3.post("/dossiers", handler(async (req, res) => {
   });
   res.status(201).json(serializeDossier(created));
 }));
-router3.post("/dossiers/:id/update", handler(async (req, res) => {
+router6.post("/dossiers/:id/update", handler(async (req, res) => {
   const id = identifier(req.params.id);
   if (!id) return res.status(400).json({ error: "Identifiant de dossier invalide." });
   const existing = await findAccessibleDossier(req, id);
@@ -1455,7 +1792,7 @@ router3.post("/dossiers/:id/update", handler(async (req, res) => {
   if (existing.isMain) await prisma.organization.update({ where: { id: existing.organizationId }, data: { name: d.name } });
   res.json(serializeDossier(updated));
 }));
-router3.post("/dossiers/:id/lock", handler(async (req, res) => {
+router6.post("/dossiers/:id/lock", handler(async (req, res) => {
   const id = identifier(req.params.id);
   const dossier = id ? await findAccessibleDossier(req, id) : null;
   if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
@@ -1482,7 +1819,7 @@ router3.post("/dossiers/:id/lock", handler(async (req, res) => {
   });
   res.json(serializeDossier(updated));
 }));
-router3.post("/dossiers/:id/delete", handler(async (req, res) => {
+router6.post("/dossiers/:id/delete", handler(async (req, res) => {
   const id = identifier(req.params.id);
   if (!id) return res.status(400).json({ error: "Identifiant de dossier invalide." });
   const existing = await findAccessibleDossier(req, id);
@@ -1492,75 +1829,22 @@ router3.post("/dossiers/:id/delete", handler(async (req, res) => {
   await prisma.clientDossier.delete({ where: { id } });
   res.status(204).end();
 }));
-var dossiers_default = router3;
-
-// server/routes/notifications.ts
-init_db();
-init_mappers();
-import { Router as Router4 } from "express";
-var router4 = Router4();
-router4.post("/notifications", handler(async (req, res) => {
-  const n = unwrap(validateNotificationInput(req.body));
-  if (n.dossierId) {
-    const dossier = await findAccessibleDossier(req, n.dossierId);
-    if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
-  }
-  const created = await prisma.appNotification.create({
-    data: {
-      id: n.id,
-      title: n.title,
-      message: n.message,
-      type: n.type,
-      category: n.category,
-      read: n.read,
-      dossierId: n.dossierId,
-      actionLabel: n.actionLabel,
-      actionMode: n.actionMode,
-      actionExpertTab: n.actionExpertTab
-    }
-  });
-  res.status(201).json(serializeNotification(created));
-}));
-router4.post("/notifications/read-all", handler(async (req, res) => {
-  await prisma.appNotification.updateMany({ where: notificationScopeWhere(req), data: { read: true } });
-  res.status(204).end();
-}));
-router4.post("/notifications/:id/read", handler(async (req, res) => {
-  const id = identifier(req.params.id);
-  if (!id) return res.status(400).json({ error: "Identifiant de notification invalide." });
-  const scoped = await prisma.appNotification.findFirst({ where: { id, ...notificationScopeWhere(req) } });
-  if (!scoped) return res.status(404).json({ error: "Notification introuvable." });
-  const updated = await prisma.appNotification.update({ where: { id }, data: { read: true } });
-  res.json(serializeNotification(updated));
-}));
-router4.post("/notifications/:id/delete", handler(async (req, res) => {
-  const id = identifier(req.params.id);
-  if (!id) return res.status(400).json({ error: "Identifiant de notification invalide." });
-  const scoped = await prisma.appNotification.findFirst({ where: { id, ...notificationScopeWhere(req) } });
-  if (!scoped) return res.status(404).json({ error: "Notification introuvable." });
-  await prisma.appNotification.delete({ where: { id } });
-  res.status(204).end();
-}));
-router4.post("/notifications/clear", handler(async (req, res) => {
-  await prisma.appNotification.deleteMany({ where: notificationScopeWhere(req) });
-  res.status(204).end();
-}));
-var notifications_default = router4;
+var dossiers_default = router6;
 
 // server/routes/settings.ts
 init_db();
 init_mappers();
 init_seedData();
-import { Router as Router5 } from "express";
-var router5 = Router5();
-router5.get("/settings", handler(async (req, res) => {
+import { Router as Router7 } from "express";
+var router7 = Router7();
+router7.get("/settings", handler(async (req, res) => {
   const dossierId = identifier(req.query.dossierId);
   const dossier = dossierId ? await findAccessibleDossier(req, dossierId) : null;
   if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
   const row = await prisma.platformSettings.findUnique({ where: { dossierId: dossier.id } }) ?? await createDefaultPlatformSettings(prisma, dossier.id);
   res.json(serializePlatformSettings(row));
 }));
-router5.post("/settings/update", handler(async (req, res) => {
+router7.post("/settings/update", handler(async (req, res) => {
   const dossierId = identifier((req.body ?? {}).dossierId);
   const dossier = dossierId ? await findAccessibleDossier(req, dossierId) : null;
   if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
@@ -1571,19 +1855,19 @@ router5.post("/settings/update", handler(async (req, res) => {
   const saved = await prisma.platformSettings.findUniqueOrThrow({ where: { dossierId: dossier.id } });
   res.json({ settings: serializePlatformSettings(saved), propagated });
 }));
-var settings_default = router5;
+var settings_default = router7;
 
 // server/routes/backup.ts
 init_db();
-import { Router as Router6 } from "express";
+import { Router as Router8 } from "express";
 import { randomUUID } from "node:crypto";
-var router6 = Router6();
+var router8 = Router8();
 var optionalId = (v) => identifier(v) ?? null;
 var optionalDate = (v) => {
   const d = typeof v === "string" ? new Date(v) : null;
   return d && !Number.isNaN(d.getTime()) ? d : null;
 };
-router6.post("/import-backup", handler(async (req, res) => {
+router8.post("/import-backup", handler(async (req, res) => {
   const user = getAuthUser(req);
   if (!user) return res.status(401).json({ error: "Authentification requise." });
   const body = req.body ?? {};
@@ -1653,7 +1937,15 @@ router6.post("/import-backup", handler(async (req, res) => {
       invoiceId: invoiceId && invoiceDossier.get(invoiceId) === dossierId ? invoiceId : null,
       reversalOfId: optionalId(raw?.reversalOfId)
     });
-    e.lines.forEach((l, position) => lineRows.push({ entryId: id, position, accountCode: l.accountCode, label: l.label, debit: l.debit, credit: l.credit }));
+    e.lines.forEach((l, position) => lineRows.push({
+      entryId: id,
+      position,
+      accountCode: l.accountCode,
+      label: l.label,
+      debit: l.debit,
+      credit: l.credit,
+      reconciledOn: Array.isArray(raw?.lines) ? optionalDate(raw.lines[position]?.reconciledOn) : null
+    }));
     for (const a of e.auditTrail) {
       auditRows.push({
         id: a.id,
@@ -1689,6 +1981,7 @@ router6.post("/import-backup", handler(async (req, res) => {
   }
   await prisma.$transaction(async (tx) => {
     const payments = await tx.invoicePayment.findMany({ where: { entry: { clientDossierId: { in: dossierIds } } } });
+    const attachments = await tx.attachment.findMany({ where: { entry: { clientDossierId: { in: dossierIds } } } });
     await tx.appNotification.deleteMany({ where: { dossierId: { in: dossierIds } } });
     await tx.journalEntry.deleteMany({ where: { clientDossierId: { in: dossierIds } } });
     for (const [id, data] of restorable) await tx.clientDossier.update({ where: { id }, data: dossierData(data) });
@@ -1700,17 +1993,19 @@ router6.post("/import-backup", handler(async (req, res) => {
     await tx.auditLog.createMany({ data: auditRows, skipDuplicates: true });
     const kept = payments.filter((p) => usedIds.has(p.entryId));
     if (kept.length) await tx.invoicePayment.createMany({ data: kept });
+    const keptFiles = attachments.filter((a) => usedIds.has(a.entryId));
+    if (keptFiles.length) await tx.attachment.createMany({ data: keptFiles });
   }, { timeout: 12e4, maxWait: 1e4 });
   res.json(await buildBootstrapPayload(req));
 }));
-var backup_default = router6;
+var backup_default = router8;
 
 // server/routes/accounts.ts
 init_db();
 init_mappers();
-import { Router as Router7 } from "express";
-var router7 = Router7();
-router7.post("/accounts", handler(async (req, res) => {
+import { Router as Router9 } from "express";
+var router9 = Router9();
+router9.post("/accounts", handler(async (req, res) => {
   const a = unwrap(validateAccountInput(req.body));
   const dossier = await findAccessibleDossier(req, a.dossierId);
   if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
@@ -1736,7 +2031,7 @@ router7.post("/accounts", handler(async (req, res) => {
   });
   res.status(201).json(serializeAccount(row));
 }));
-router7.post("/accounts/:code/update", handler(async (req, res) => {
+router9.post("/accounts/:code/update", handler(async (req, res) => {
   const code = identifier(req.params.code);
   const row = code ? await prisma.syscohadaAccount.findUnique({ where: { code } }) : null;
   if (!row || !row.dossierId || !await findAccessibleDossier(req, row.dossierId)) {
@@ -1749,12 +2044,12 @@ router7.post("/accounts/:code/update", handler(async (req, res) => {
   const updated = await prisma.syscohadaAccount.update({ where: { code: row.code }, data });
   res.json(serializeAccount(updated));
 }));
-var accounts_default = router7;
+var accounts_default = router9;
 
 // server/routes/invoices.ts
 init_db();
 init_mappers();
-import { Router as Router8 } from "express";
+import { Router as Router10 } from "express";
 
 // src/utils/invoices.ts
 function computeInvoiceTotals(lines, vatRate) {
@@ -1872,7 +2167,7 @@ function detectPaymentMethod(text2) {
 }
 
 // server/routes/invoices.ts
-var router8 = Router8();
+var router10 = Router10();
 var INVOICE_INCLUDE = { lines: true, payments: true };
 async function relatedInvoices(originalInvoiceId) {
   if (!originalInvoiceId) return [];
@@ -1937,7 +2232,7 @@ async function creditNoteError(d, dossierId, selfId) {
   const max = Number(orig.totalTTC) - already;
   return d.totalTTC > max + 1e-3 ? `L'avoir d\xE9passe le montant restant \xE0 cr\xE9diter sur ${orig.number} (${max.toLocaleString("fr-FR")}).` : null;
 }
-router8.post("/invoices", handler(async (req, res) => {
+router10.post("/invoices", handler(async (req, res) => {
   const dossierId = identifier((req.body ?? {}).clientDossierId);
   const dossier = dossierId ? await findAccessibleDossier(req, dossierId) : null;
   if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
@@ -1962,7 +2257,7 @@ router8.post("/invoices", handler(async (req, res) => {
     }
   }
 }));
-router8.post("/invoices/:id/update", handler(async (req, res) => {
+router10.post("/invoices/:id/update", handler(async (req, res) => {
   const inv = await findAccessibleInvoice(req, identifier(req.params.id));
   if (!inv) return res.status(404).json({ error: "Facture introuvable." });
   if (inv.status !== "draft" && inv.status !== "pending_review") {
@@ -1981,14 +2276,14 @@ router8.post("/invoices/:id/update", handler(async (req, res) => {
   ]);
   res.json(serializeInvoice(row));
 }));
-router8.post("/invoices/:id/submit", handler(async (req, res) => {
+router10.post("/invoices/:id/submit", handler(async (req, res) => {
   const inv = await findAccessibleInvoice(req, identifier(req.params.id));
   if (!inv) return res.status(404).json({ error: "Facture introuvable." });
   if (inv.status !== "draft") return res.status(409).json({ error: "Seul un brouillon peut \xEAtre soumis." });
   const row = await prisma.invoice.update({ where: { id: inv.id }, data: { status: "pending_review" }, include: INVOICE_INCLUDE });
   res.json(serializeInvoice(row));
 }));
-router8.post("/invoices/:id/validate", handler(async (req, res) => {
+router10.post("/invoices/:id/validate", handler(async (req, res) => {
   const user = getAuthUser(req);
   const inv = await findAccessibleInvoice(req, identifier(req.params.id));
   if (!inv) return res.status(404).json({ error: "Facture introuvable." });
@@ -2048,7 +2343,7 @@ router8.post("/invoices/:id/validate", handler(async (req, res) => {
   ]);
   res.json({ invoice: serializeInvoice(fresh), entries: entries.map(serializeEntry), related: await relatedInvoices(inv.originalInvoiceId) });
 }));
-router8.post("/invoices/:id/cancel", handler(async (req, res) => {
+router10.post("/invoices/:id/cancel", handler(async (req, res) => {
   const inv = await findAccessibleInvoice(req, identifier(req.params.id));
   if (!inv) return res.status(404).json({ error: "Facture introuvable." });
   if (inv.status === "cancelled") return res.status(409).json({ error: "Facture d\xE9j\xE0 annul\xE9e." });
@@ -2076,7 +2371,7 @@ router8.post("/invoices/:id/cancel", handler(async (req, res) => {
   ]);
   res.json({ invoice: serializeInvoice(fresh), entries: entries.map(serializeEntry), related: await relatedInvoices(inv.originalInvoiceId) });
 }));
-router8.post("/invoices/:id/payments", handler(async (req, res) => {
+router10.post("/invoices/:id/payments", handler(async (req, res) => {
   const user = getAuthUser(req);
   const inv = await findAccessibleInvoice(req, identifier(req.params.id));
   if (!inv) return res.status(404).json({ error: "Facture introuvable." });
@@ -2145,7 +2440,7 @@ router8.post("/invoices/:id/payments", handler(async (req, res) => {
   ]);
   res.status(201).json({ invoice: serializeInvoice(fresh), entry: serializeEntry(entry) });
 }));
-router8.post("/invoices/:id/delete", handler(async (req, res) => {
+router10.post("/invoices/:id/delete", handler(async (req, res) => {
   const inv = await findAccessibleInvoice(req, identifier(req.params.id));
   if (!inv) return res.status(404).json({ error: "Facture introuvable." });
   if (inv.status !== "draft" && inv.status !== "pending_review") {
@@ -2159,7 +2454,7 @@ router8.post("/invoices/:id/delete", handler(async (req, res) => {
   await prisma.invoice.delete({ where: { id: inv.id } });
   res.status(204).end();
 }));
-router8.post("/invoice-payments/:id/delete", handler(async (req, res) => {
+router10.post("/invoice-payments/:id/delete", handler(async (req, res) => {
   const id = identifier(req.params.id);
   const p = id ? await prisma.invoicePayment.findUnique({ where: { id }, include: { entry: { select: { invoiceId: true } } } }) : null;
   const inv = p ? await findAccessibleInvoice(req, p.invoiceId) : null;
@@ -2169,28 +2464,30 @@ router8.post("/invoice-payments/:id/delete", handler(async (req, res) => {
   const fresh = await prisma.invoice.findUniqueOrThrow({ where: { id: inv.id }, include: INVOICE_INCLUDE });
   res.json(serializeInvoice(fresh));
 }));
-var invoices_default = router8;
+var invoices_default = router10;
 
 // server/routes/index.ts
-var router9 = Router9();
-router9.get("/bootstrap", handler(async (req, res) => {
+var router11 = Router11();
+router11.get("/bootstrap", handler(async (req, res) => {
   res.json(await buildBootstrapPayload(req));
 }));
-router9.use(dossiers_default);
-router9.use(entries_default);
-router9.use(notifications_default);
-router9.use(settings_default);
-router9.use(backup_default);
-router9.use(accounts_default);
-router9.use(invoices_default);
-router9.use(recurring_default);
-var routes_default = router9;
+router11.use(dossiers_default);
+router11.use(entries_default);
+router11.use(notifications_default);
+router11.use(settings_default);
+router11.use(backup_default);
+router11.use(accounts_default);
+router11.use(invoices_default);
+router11.use(recurring_default);
+router11.use(attachments_default);
+router11.use(assets_default);
+var routes_default = router11;
 
 // server/agentRoutes.ts
 init_db();
 init_mappers();
 init_initialSettings();
-import { Router as Router10 } from "express";
+import { Router as Router12 } from "express";
 
 // src/utils/analytics.ts
 init_syscohadaPlan();
@@ -2996,7 +3293,7 @@ function isQuestion(text2) {
   if (n.includes("?")) return !(hasAmount && OPERATION_VERBS.test(n));
   return false;
 }
-var MONTHS = ["janvier", "fevrier", "mars", "avril", "mai", "juin", "juillet", "aout", "septembre", "octobre", "novembre", "decembre"];
+var MONTHS2 = ["janvier", "fevrier", "mars", "avril", "mai", "juin", "juillet", "aout", "septembre", "octobre", "novembre", "decembre"];
 function fmt(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
@@ -3018,7 +3315,7 @@ function parseDateHint(text2, now) {
     return fmt(new Date(y, parseInt(m[2], 10) - 1, parseInt(m[1], 10)));
   }
   m = n.match(/\ble\s+(\d{1,2})\s+(janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre)(?:\s+(\d{4}))?/);
-  if (m) return fmt(new Date(m[3] ? parseInt(m[3], 10) : now.getFullYear(), MONTHS.indexOf(m[2]), parseInt(m[1], 10)));
+  if (m) return fmt(new Date(m[3] ? parseInt(m[3], 10) : now.getFullYear(), MONTHS2.indexOf(m[2]), parseInt(m[1], 10)));
   m = n.match(/\ble\s+(\d{1,2})[/.-](\d{1,2})\b/);
   if (m) return fmt(new Date(now.getFullYear(), parseInt(m[2], 10) - 1, parseInt(m[1], 10)));
   return void 0;
@@ -3552,7 +3849,7 @@ async function analyzeWithGemini(input) {
 }
 
 // server/agentRoutes.ts
-var router10 = Router10();
+var router12 = Router12();
 var INPUT_MODES2 = ["text", "voice", "photo", "mobile_money", "manual", "excel_import"];
 var ALLOWED_DOCUMENT_TYPES = /^(image\/(jpeg|png|webp|heic|heif)|application\/pdf)$/;
 function handler2(fn) {
@@ -3596,7 +3893,7 @@ function reviewNote(entries) {
 
 \u26A0\uFE0F ${anomaly.detectedAnomaly}` : "";
 }
-router10.post("/chat", handler2(async (req, res) => {
+router12.post("/chat", handler2(async (req, res) => {
   const { dossierId, message = "", inputType = "text", pendingText, image } = req.body ?? {};
   if (typeof dossierId !== "string" || !String(message).trim() && !image) {
     return res.status(400).json({ error: "Dossier et message requis." });
@@ -3671,7 +3968,7 @@ router10.post("/chat", handler2(async (req, res) => {
   }
   return res.json({ success: true, intent: outcome.intent, reply: outcome.reply, entries: [], source });
 }));
-router10.post("/dossier-summary", handler2(async (req, res) => {
+router12.post("/dossier-summary", handler2(async (req, res) => {
   const ctx = await loadContext(req, String(req.body?.dossierId ?? ""));
   if (!ctx) return res.status(404).json({ error: "Dossier introuvable." });
   const a = buildAgentContext(ctx.entries, ctx.now);
@@ -3692,16 +3989,16 @@ router10.post("/dossier-summary", handler2(async (req, res) => {
     analytics: a
   });
 }));
-var agentRoutes_default = router10;
+var agentRoutes_default = router12;
 
 // server/authRoutes.ts
 init_db();
-import { Router as Router11 } from "express";
-var router11 = Router11();
+import { Router as Router13 } from "express";
+var router13 = Router13();
 function serializeUser(u) {
   return { id: u.id, email: u.email, name: u.name, role: u.role, dossierId: u.dossierId };
 }
-router11.post("/signup", async (req, res, next) => {
+router13.post("/signup", async (req, res, next) => {
   try {
     const { email, name, password } = req.body ?? {};
     if (typeof email !== "string" || typeof name !== "string" || !email.trim() || !name.trim() || !password) {
@@ -3725,7 +4022,7 @@ router11.post("/signup", async (req, res, next) => {
     next(e);
   }
 });
-router11.post("/login", async (req, res, next) => {
+router13.post("/login", async (req, res, next) => {
   try {
     const { email, password } = req.body ?? {};
     if (!email || !password) {
@@ -3742,11 +4039,11 @@ router11.post("/login", async (req, res, next) => {
     next(e);
   }
 });
-router11.post("/logout", (_req, res) => {
+router13.post("/logout", (_req, res) => {
   res.clearCookie(COOKIE_NAME, { ...COOKIE_OPTIONS, maxAge: void 0 });
   res.status(204).end();
 });
-router11.post("/change-password", requireAuth, async (req, res, next) => {
+router13.post("/change-password", requireAuth, async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = req.body ?? {};
     if (typeof newPassword !== "string" || newPassword.length < 8) {
@@ -3762,7 +4059,7 @@ router11.post("/change-password", requireAuth, async (req, res, next) => {
     next(e);
   }
 });
-router11.get("/me", async (req, res, next) => {
+router13.get("/me", async (req, res, next) => {
   try {
     const token = req.cookies?.[COOKIE_NAME];
     const payload = token ? verifyToken(token) : null;
@@ -3778,12 +4075,12 @@ router11.get("/me", async (req, res, next) => {
     next(e);
   }
 });
-var authRoutes_default = router11;
+var authRoutes_default = router13;
 
 // server/adminRoutes.ts
 init_db();
-import { Router as Router12 } from "express";
-var router12 = Router12();
+import { Router as Router14 } from "express";
+var router14 = Router14();
 var ROLES = ["ADMIN", "COMPTABLE"];
 function requireAdmin(req, res, next) {
   const user = req.user;
@@ -3800,8 +4097,8 @@ function validId(value) {
   if (typeof value !== "string") return null;
   return /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null;
 }
-router12.use(requireAdmin);
-router12.get("/users", async (_req, res, next) => {
+router14.use(requireAdmin);
+router14.get("/users", async (_req, res, next) => {
   try {
     const users = await prisma.user.findMany({ orderBy: { createdAt: "asc" }, include: WITH_ORG });
     res.json(users.map(serializeUser2));
@@ -3809,7 +4106,7 @@ router12.get("/users", async (_req, res, next) => {
     next(e);
   }
 });
-router12.post("/users", async (req, res, next) => {
+router14.post("/users", async (req, res, next) => {
   try {
     const { email, name, password, role } = req.body ?? {};
     if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -3835,7 +4132,7 @@ router12.post("/users", async (req, res, next) => {
     next(e);
   }
 });
-router12.post("/users/:id/role", async (req, res, next) => {
+router14.post("/users/:id/role", async (req, res, next) => {
   try {
     const id = validId(req.params.id);
     if (!id) return res.status(400).json({ error: "Identifiant utilisateur invalide." });
@@ -3853,7 +4150,7 @@ router12.post("/users/:id/role", async (req, res, next) => {
     next(e);
   }
 });
-router12.post("/users/:id/password", async (req, res, next) => {
+router14.post("/users/:id/password", async (req, res, next) => {
   try {
     const id = validId(req.params.id);
     if (!id) return res.status(400).json({ error: "Identifiant utilisateur invalide." });
@@ -3867,7 +4164,7 @@ router12.post("/users/:id/password", async (req, res, next) => {
     next(e);
   }
 });
-router12.post("/users/:id/delete", async (req, res, next) => {
+router14.post("/users/:id/delete", async (req, res, next) => {
   try {
     const id = validId(req.params.id);
     if (!id) return res.status(400).json({ error: "Identifiant utilisateur invalide." });
@@ -3884,7 +4181,7 @@ router12.post("/users/:id/delete", async (req, res, next) => {
     next(e);
   }
 });
-var adminRoutes_default = router12;
+var adminRoutes_default = router14;
 
 // server/app.ts
 var app = express();

@@ -221,7 +221,7 @@ export interface NotificationInput {
 const NOTIFICATION_TYPES = ['info', 'success', 'warning', 'error'] as const;
 const NOTIFICATION_CATEGORIES = ['compta', 'fiscal', 'tresorerie', 'ia', 'system'] as const;
 const STARTUP_VIEWS = ['simplified', 'expert'] as const;
-const EXPERT_TABS = ['portfolio', 'journal', 'invoices', 'accounts', 'ledger', 'financials', 'tax'] as const;
+const EXPERT_TABS = ['portfolio', 'journal', 'invoices', 'accounts', 'ledger', 'financials', 'tax', 'bank', 'assets'] as const;
 
 export function validateNotificationInput(body: unknown): Result<NotificationInput> {
   const b = (body ?? {}) as Record<string, unknown>;

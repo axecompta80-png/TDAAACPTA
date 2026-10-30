@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { handler } from '../http';
 import recurringRouter from './recurring';
+import attachmentsRouter from './attachments';
+import assetsRouter from './assets';
 import { buildBootstrapPayload } from './bootstrap';
 import dossiersRouter from './dossiers';
 import entriesRouter from './entries';
@@ -31,5 +33,7 @@ router.use(backupRouter);
 router.use(accountsRouter);
 router.use(invoicesRouter);
 router.use(recurringRouter);
+router.use(attachmentsRouter);
+router.use(assetsRouter);
 
 export default router;

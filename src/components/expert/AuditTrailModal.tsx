@@ -1,16 +1,56 @@
-import React from 'react';
-import { JournalEntry } from '../../types';
-import { History, ShieldCheck, X, CheckCircle2, AlertTriangle, Edit3, UserCheck } from 'lucide-react';
+import React, { useState } from 'react';
+import { AttachmentMeta, JournalEntry } from '../../types';
+import { History, ShieldCheck, X, CheckCircle2, AlertTriangle, Edit3, UserCheck, Paperclip, Trash2 } from 'lucide-react';
+import { api } from '../../utils/api';
 
 interface AuditTrailModalProps {
   entry: JournalEntry;
   onClose: () => void;
+  /** Période bloquée : on peut joindre une pièce, pas en retirer. */
+  locked?: boolean;
+  onAttachmentsChange?: (entryId: string, attachments: AttachmentMeta[]) => void;
 }
+
+const readBase64 = (file: File) => new Promise<string>((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result));
+  r.onerror = () => reject(r.error);
+  r.readAsDataURL(file);
+});
 
 export const AuditTrailModal: React.FC<AuditTrailModalProps> = ({
   entry,
-  onClose
+  onClose,
+  locked,
+  onAttachmentsChange,
 }) => {
+  const [files, setFiles] = useState<AttachmentMeta[]>(entry.attachments ?? []);
+  const [busy, setBusy] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const update = (next: AttachmentMeta[]) => { setFiles(next); onAttachmentsChange?.(entry.id, next); };
+
+  const upload = async (list: FileList | null) => {
+    if (!list?.length) return;
+    setBusy(true); setFileError(null);
+    try {
+      const added: AttachmentMeta[] = [];
+      for (const f of Array.from(list)) {
+        if (f.size > 3 * 1024 * 1024) throw new Error(`${f.name} : 3 Mo maximum.`);
+        added.push(await api.addAttachment(entry.id, { filename: f.name, mimeType: f.type, data: await readBase64(f) }));
+      }
+      update([...files, ...added]);
+    } catch (e) {
+      setFileError(e instanceof Error ? e.message : 'Envoi impossible.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async (id: string) => {
+    setFileError(null);
+    try { await api.deleteAttachment(id); update(files.filter(f => f.id !== id)); }
+    catch (e) { setFileError(e instanceof Error ? e.message : 'Suppression impossible.'); }
+  };
+
   return (
     <div className="fixed inset-0 bg-[#1E084A]/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
       <div className="bg-white border border-[#DDD6FE] w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
@@ -61,6 +101,33 @@ export const AuditTrailModal: React.FC<AuditTrailModalProps> = ({
                 Source originale : "{entry.rawInput}" ({entry.inputType})
               </p>
             )}
+          </div>
+
+          {/* Pièces justificatives */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-[#7024E3] font-mono">Pièces justificatives</h4>
+              <label className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-[#DDD6FE] text-[#7024E3] cursor-pointer hover:bg-[#F5F3FF] ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+                <Paperclip className="w-3.5 h-3.5" /> {busy ? 'Envoi…' : 'Joindre'}
+                <input type="file" multiple className="hidden" accept=".pdf,.jpg,.jpeg,.png,.webp,.xlsx,.xls,.csv,.docx"
+                  onChange={e => { upload(e.target.files); e.target.value = ''; }} />
+              </label>
+            </div>
+            {files.length === 0 && <p className="text-[12px] text-[#7C709A]">Aucune pièce. Joignez la facture, le reçu ou le relevé (PDF, photo, Excel ; 3 Mo maximum).</p>}
+            {files.map(f => (
+              <div key={f.id} className="flex items-center justify-between gap-2 px-3 py-2 border border-[#DDD6FE] rounded-lg text-xs">
+                <a href={api.attachmentUrl(f.id)} target="_blank" rel="noreferrer" className="font-semibold text-[#7024E3] hover:underline truncate">{f.filename}</a>
+                <span className="flex items-center gap-2 shrink-0 text-[#7C709A] font-mono">
+                  {Math.max(1, Math.round(f.size / 1024))} Ko
+                  {!locked && (
+                    <button onClick={() => remove(f.id)} title="Retirer la pièce" className="p-1 text-[#DC2626] hover:bg-[#FEE2E2] rounded">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </span>
+              </div>
+            ))}
+            {fileError && <p className="text-[12px] text-[#B91C1C]">{fileError}</p>}
           </div>
 
           {/* Timeline */}

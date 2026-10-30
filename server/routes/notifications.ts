@@ -1,11 +1,52 @@
 import { Router } from 'express';
 import { prisma } from '../db';
 import { serializeNotification } from '../mappers';
-import { findAccessibleDossier, notificationScopeWhere } from '../access';
+import type { Request } from 'express';
+import { findAccessibleDossier, notificationScopeWhere, dossierScopeWhere } from '../access';
+import { deadlinesToRemind } from '../../src/utils/fiscalCalendar';
 import { handler } from '../http';
 import { validateNotificationInput, identifier, unwrap } from '../validation';
 
 const router = Router();
+
+const fr = (d: string) => d.split('-').reverse().join('/');
+
+/**
+ * Rappels d'échéances fiscales des dossiers visibles (réglage « Rappels des échéances »).
+ * Identifiant fixe par dossier et échéance : un seul rappel, même si l'application est rechargée.
+ * Une échéance est faite quand sa période est bloquée (TVA marquée déclarée, exercice clôturé).
+ * Rien n'est rappelé pour une période antérieure au dossier (création ou première écriture).
+ */
+export async function createDeadlineReminders(req: Request) {
+  const dossiers = await prisma.clientDossier.findMany({
+    where: dossierScopeWhere(req) as any,
+    select: { id: true, lockedUntil: true, regimeFiscal: true, createdAt: true, settings: { select: { notifyOnTaxDeadline: true } } },
+  });
+  const firsts = await prisma.journalEntry.groupBy({ by: ['clientDossierId'], where: { clientDossierId: { in: dossiers.map(d => d.id) } }, _min: { date: true } });
+  const startOf = (d: typeof dossiers[number]) => {
+    const first = firsts.find(f => f.clientDossierId === d.id)?._min.date;
+    return (first && first < d.createdAt ? first : d.createdAt).toISOString().slice(0, 7);
+  };
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = dossiers.filter(d => d.settings?.notifyOnTaxDeadline ?? true).flatMap(d =>
+    deadlinesToRemind(today, d.lockedUntil?.toISOString().slice(0, 10))
+      .filter(x => x.periodEnd.slice(0, 7) >= startOf(d))
+      .filter(x => d.regimeFiscal !== 'SYNTHETIQUE_FORFAIT' || !x.key.startsWith('tva'))
+      .map(x => ({
+        id: `echeance-${d.id}-${x.key}`,
+        title: x.due < today ? `En retard : ${x.label}` : `Échéance le ${fr(x.due)} : ${x.label}`,
+        message: x.due < today
+          ? `La date limite du ${fr(x.due)} est passée. Déposez la déclaration puis marquez la période déclarée.`
+          : `À déposer avant le ${fr(x.due)}. Une fois déclarée, marquez la période déclarée pour la bloquer.`,
+        type: (x.due < today ? 'warning' : 'info') as 'warning' | 'info',
+        category: 'fiscal' as const,
+        dossierId: d.id,
+        actionLabel: 'Ouvrir la fiscalité',
+        actionMode: 'expert' as const,
+        actionExpertTab: 'tax',
+      })));
+  if (rows.length) await prisma.appNotification.createMany({ data: rows, skipDuplicates: true });
+}
 
 /** Création d'une notification liée à un dossier accessible (ou globale si aucun dossier). */
 router.post('/notifications', handler(async (req, res) => {

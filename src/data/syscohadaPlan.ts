@@ -15,14 +15,15 @@ export const SYSCOHADA_ACCOUNTS: SYSCOHADAAccount[] = [
   { code: '215', label: 'Matériel de transport (camions, tricycles)', classNumber: 2, category: 'bilan_actif' },
   { code: '241', label: 'Matériel et outillage industriel', classNumber: 2, category: 'bilan_actif' },
   { code: '244', label: 'Matériel de bureau et informatique', classNumber: 2, category: 'bilan_actif' },
+  { code: '231', label: 'Bâtiments (boutique, entrepôt, bureaux)', classNumber: 2, category: 'bilan_actif' },
   { code: '245', label: 'Mobilier de bureau et étals', classNumber: 2, category: 'bilan_actif' },
-  
-  // Classe 3 : Stocks
+  { code: '2831', label: 'Amortissements des bâtiments', classNumber: 2, category: 'bilan_actif' },
   { code: '2815', label: 'Amortissements du matériel de transport', classNumber: 2, category: 'bilan_actif' },
   { code: '2841', label: 'Amortissements du matériel et outillage', classNumber: 2, category: 'bilan_actif' },
   { code: '2844', label: 'Amortissements du matériel de bureau et informatique', classNumber: 2, category: 'bilan_actif' },
   { code: '2845', label: 'Amortissements du mobilier de bureau et étals', classNumber: 2, category: 'bilan_actif' },
 
+  // Classe 3 : Stocks
   { code: '311', label: 'Marchandises (stocks généraux)', classNumber: 3, category: 'bilan_actif' },
   { code: '321', label: 'Matières premières et fournitures liées', classNumber: 3, category: 'bilan_actif' },
   
@@ -41,6 +42,7 @@ export const SYSCOHADA_ACCOUNTS: SYSCOHADAAccount[] = [
   { code: '4449', label: 'État, crédit de TVA à reporter', classNumber: 4, category: 'bilan_actif' },
   { code: '4471', label: 'État, Impôts sur les bénéfices & acomptes', classNumber: 4, category: 'bilan_passif' },
   { code: '4711', label: 'Compte d’attente créditeur/débiteur', classNumber: 4, category: 'bilan_actif' },
+  { code: '4812', label: 'Fournisseurs d’investissements (achats d’immobilisations)', classNumber: 4, category: 'bilan_passif' },
 
   // Classe 5 : Trésorerie
   { code: '5211', label: 'Banque locale (Ecobank, Coris, SG, UBA)', classNumber: 5, category: 'tresorerie' },

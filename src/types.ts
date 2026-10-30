@@ -25,13 +25,40 @@ export interface AuditLog {
 export type JournalCode = 'VT' | 'AC' | 'BQ' | 'CA' | 'OD' | 'AN';
 
 /** Une ligne d'écriture : un compte, au débit OU au crédit. */
+/** Onglets du mode Comptable. */
+export type ExpertTab = 'portfolio' | 'journal' | 'invoices' | 'accounts' | 'ledger' | 'financials' | 'tax' | 'bank' | 'assets';
+
 export interface JournalLine {
+  /** Identifiant serveur (absent sur une ligne en cours de saisie). */
+  id?: string;
   accountCode: string;
   /** Intitulé du compte, renseigné par le serveur. */
   accountLabel?: string;
   label?: string;
   debit: number;
   credit: number;
+  /** Rapprochement bancaire : date du relevé où la ligne a été pointée. */
+  reconciledOn?: string;
+}
+
+/** Pièce justificative (métadonnées ; le fichier se télécharge à part). */
+export interface AttachmentMeta {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
+/** Immobilisation du registre, amortie en linéaire. */
+export interface FixedAsset {
+  id: string;
+  clientDossierId: string;
+  label: string;
+  accountCode: string;
+  acquisitionDate: string;
+  cost: number;
+  durationYears: number;
+  depreciatedThrough?: number;
 }
 
 export interface JournalEntry {
@@ -63,6 +90,7 @@ export interface JournalEntry {
   invoiceId?: string;
   /** Écriture contre-passée par celle-ci. */
   reversalOfId?: string;
+  attachments?: AttachmentMeta[];
 }
 
 /** Écriture répétée chaque mois. */
@@ -243,7 +271,7 @@ export interface AppNotification {
   actionLabel?: string;
   actionPayload?: {
     mode?: 'simplified' | 'expert';
-    expertTab?: 'portfolio' | 'journal' | 'invoices' | 'accounts' | 'ledger' | 'financials' | 'tax';
+    expertTab?: ExpertTab;
   };
 }
 

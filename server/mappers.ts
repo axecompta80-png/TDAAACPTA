@@ -1,4 +1,4 @@
-import type { ClientDossier, JournalEntry, AppNotification, PlatformSettings, SYSCOHADAAccount, Invoice } from '../src/types';
+import type { ClientDossier, JournalEntry, AppNotification, PlatformSettings, SYSCOHADAAccount, Invoice, FixedAsset } from '../src/types';
 
 // Prisma enums use @map to store the exact French/hyphenated strings the
 // frontend already relies on. Prisma Client itself always returns the
@@ -87,11 +87,13 @@ export function serializeEntry(row: any): JournalEntry {
     lines: [...(row.lines ?? [])]
       .sort((a: any, b: any) => a.position - b.position)
       .map((l: any) => ({
+        id: l.id,
         accountCode: l.accountCode,
         accountLabel: l.account?.label,
         label: l.label ?? undefined,
         debit: Number(l.debit),
         credit: Number(l.credit),
+        reconciledOn: l.reconciledOn?.toISOString().slice(0, 10) ?? undefined,
       })),
     amount: Number(row.amount),
     clientDossierId: row.clientDossierId,
@@ -107,6 +109,7 @@ export function serializeEntry(row: any): JournalEntry {
     validatedById: row.validatedById ?? undefined,
     validatedAt: row.validatedAt?.toISOString() ?? undefined,
     invoiceId: row.invoiceId ?? undefined,
+    attachments: (row.attachments ?? []).map((a: any) => ({ id: a.id, filename: a.filename, mimeType: a.mimeType, size: a.size })),
     reversalOfId: row.reversalOfId ?? undefined,
   };
 }
@@ -201,5 +204,13 @@ export function serializePlatformSettings(row: any): PlatformSettings {
     notifyOnAnomaly: row.notifyOnAnomaly,
     notifyOnTaxDeadline: row.notifyOnTaxDeadline,
     notifyOnMobileMoneySync: row.notifyOnMobileMoneySync,
+  };
+}
+
+export function serializeAsset(a: any): FixedAsset {
+  return {
+    id: a.id, clientDossierId: a.clientDossierId, label: a.label, accountCode: a.accountCode,
+    acquisitionDate: a.acquisitionDate.toISOString().slice(0, 10), cost: Number(a.cost),
+    durationYears: a.durationYears, depreciatedThrough: a.depreciatedThrough ?? undefined,
   };
 }

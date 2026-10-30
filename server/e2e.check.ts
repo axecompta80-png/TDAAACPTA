@@ -2,6 +2,7 @@
 //   ADMIN_EMAIL=… ADMIN_PASSWORD=… BASE_URL=http://localhost:3001 npx tsx server/e2e.check.ts
 // Crée des comptes jetables (entreprise A avec ses dossiers, entreprise C),
 // vérifie le cloisonnement et les droits, puis supprime ce qu'il a créé.
+import { deadlinesToRemind } from '../src/utils/fiscalCalendar';
 const BASE = (process.env.BASE_URL ?? 'http://localhost:3001') + '/api';
 const ADMIN = { email: process.env.ADMIN_EMAIL ?? '', password: process.env.ADMIN_PASSWORD ?? '' };
 const NO_ACCESS = "Vous n'avez pas accès à ce dossier.";
@@ -157,15 +158,69 @@ t('pas de doublon au rechargement', (await call('A', '/bootstrap')).j.entries.fi
 t('arrêt', (await call('A', `/recurring/${rec.j?.id}/stop`, {})).j?.active === false);
 t("C n'arrête pas une récurrente de A", (await call('C', `/recurring/${rec.j?.id}/stop`, {})).s === 404);
 
+console.log('PIÈCES JOINTES');
+const ecr = eD.j;
+const pdf = Buffer.from('%PDF-1.4 test').toString('base64');
+const pj = await call('A', `/entries/${ecr?.id}/attachments`, { filename: 'facture.pdf', mimeType: 'application/pdf', data: pdf });
+t('pièce jointe ajoutée', pj.s === 201 && pj.j?.size === 13 && pj.j?.filename === 'facture.pdf', pj.j);
+t('format non autorisé refusé', (await call('A', `/entries/${ecr?.id}/attachments`, { filename: 'x.html', mimeType: 'text/html', data: pdf })).s === 400);
+t('fichier de plus de 3 Mo refusé', (await call('A', `/entries/${ecr?.id}/attachments`, { filename: 'gros.pdf', mimeType: 'application/pdf', data: Buffer.alloc(3 * 1024 * 1024 + 1).toString('base64') })).s === 413);
+const dl = await fetch(`${BASE}/attachments/${pj.j?.id}`, { headers: { cookie: jars.A } });
+t('téléchargement identique', dl.status === 200 && dl.headers.get('content-type') === 'application/pdf' && (await dl.text()) === '%PDF-1.4 test');
+t("C ne télécharge pas la pièce de A", (await fetch(`${BASE}/attachments/${pj.j?.id}`, { headers: { cookie: jars.C } })).status === 404);
+t("C ne joint rien à une écriture de A", (await call('C', `/entries/${ecr?.id}/attachments`, { filename: 'a.pdf', mimeType: 'application/pdf', data: pdf })).s === 404);
+const pj2 = await call('A', `/entries/${ecr?.id}/attachments`, { filename: 'doublon.png', mimeType: 'image/png', data: pdf });
+t("C ne retire pas la pièce de A", (await call('C', `/attachments/${pj2.j?.id}/delete`, {})).s === 404);
+t('pièce retirée', (await call('A', `/attachments/${pj2.j?.id}/delete`, {})).s === 204);
+t('pièces visibles au chargement', JSON.stringify((await call('A', '/bootstrap')).j.entries.find((e: any) => e.id === ecr?.id)?.attachments) === JSON.stringify([pj.j]));
+
+console.log('RAPPROCHEMENT BANCAIRE');
+const bootBq = (await call('A', '/bootstrap')).j;
+const linesD = bootBq.entries.filter((e: any) => e.clientDossierId === D && e.status === 'validated').flatMap((e: any) => e.lines);
+const bankLine = linesD.find((l: any) => l.accountCode.startsWith('5'));
+const notBank = linesD.find((l: any) => !l.accountCode.startsWith('5'));
+const pt = await call('A', '/lines/reconcile', { clientDossierId: D, lineIds: [bankLine?.id], date: '2026-10-31' });
+t('mouvement de trésorerie pointé', pt.s === 200 && pt.j?.reconciledOn === '2026-10-31', pt.j);
+t('pointage visible au chargement', (await call('A', '/bootstrap')).j.entries.flatMap((e: any) => e.lines).find((l: any) => l.id === bankLine?.id)?.reconciledOn === '2026-10-31');
+t('ligne hors trésorerie refusée', (await call('A', '/lines/reconcile', { clientDossierId: D, lineIds: [notBank?.id], date: '2026-10-31' })).s === 400);
+t("C ne pointe pas chez A", (await call('C', '/lines/reconcile', { clientDossierId: D, lineIds: [bankLine?.id], date: '2026-10-31' })).s === 404);
+
+console.log('IMMOBILISATIONS');
+const im = await call('A', '/assets', { clientDossierId: D, label: 'Ordinateur', accountCode: '244', acquisitionDate: '2025-07-01', cost: 1200000, durationYears: 4 });
+t('immobilisation ajoutée au registre', im.s === 201 && im.j?.cost === 1200000 && im.j?.depreciatedThrough === undefined, im.j);
+t('compte hors immobilisations refusé', (await call('A', '/assets', { clientDossierId: D, label: 'X', accountCode: '6011', acquisitionDate: '2025-07-01', cost: 10, durationYears: 2 })).s === 400);
+const dot = await call('A', '/assets/depreciate', { clientDossierId: D, year: 2026 });
+t('dotations 2025 (prorata) et 2026 passées : D 6811 / C 2844', dot.s === 201 && dot.j?.entries?.length === 2
+  && codes(dot.j.entries[0]) === '6811:150000/0 2844:0/150000' && codes(dot.j.entries[1]) === '6811:300000/0 2844:0/300000'
+  && dot.j.entries.every((e: any) => e.journal === 'OD' && e.status === 'validated'), dot.j);
+t('relancer ne double pas les dotations', (await call('A', '/assets/depreciate', { clientDossierId: D, year: 2026 })).j?.entries?.length === 0);
+t('suppression refusée une fois amortie', (await call('A', `/assets/${im.j?.id}/delete`, {})).s === 409);
+t("C n'amortit pas chez A", (await call('C', '/assets/depreciate', { clientDossierId: D, year: 2026 })).s === 404);
+const ancien = await call('A', '/assets', { clientDossierId: D, label: 'Camion', accountCode: '215', acquisitionDate: '2024-01-01', cost: 900000, durationYears: 3, depreciatedThrough: 2025 });
+t('bien ancien : dotations passées déclarées', ancien.s === 201 && ancien.j?.depreciatedThrough === 2025, ancien.j);
+const dot27 = await call('A', '/assets/depreciate', { clientDossierId: D, year: 2027 });
+const got27 = dot27.j?.entries?.map((e: any) => `${e.date}:${e.amount}`).sort();
+t('seules les dotations manquantes sont passées (camion 2026, ordinateur 2027)', JSON.stringify(got27) === JSON.stringify(['2026-12-31:300000', '2027-12-31:300000']), got27);
+
+console.log('RAPPELS FISCAUX');
+const bootF = (await call('A', '/bootstrap')).j;
+// Le dossier vient d'être créé : rien avant le mois de sa première écriture.
+const firstMonth = bootF.entries.filter((e: any) => e.clientDossierId === D).map((e: any) => e.date).sort()[0].slice(0, 7);
+const expected = deadlinesToRemind(new Date().toISOString().slice(0, 10), bootF.dossiers.find((x: any) => x.id === D)?.lockedUntil)
+  .filter(d => d.periodEnd.slice(0, 7) >= firstMonth).map(d => `echeance-${D}-${d.key}`).sort();
+const reminders = (b: any) => b.notifications.filter((n: any) => n.id.startsWith(`echeance-${D}-`)).map((n: any) => n.id).sort();
+t('rappels des échéances proches non déclarées', JSON.stringify(reminders(bootF)) === JSON.stringify(expected), [reminders(bootF), expected]);
+t('pas de doublon au rechargement', JSON.stringify(reminders((await call('A', '/bootstrap')).j)) === JSON.stringify(expected));
+
 const snapshot = (boot: any) => JSON.stringify(boot.entries.filter((e: any) => e.clientDossierId === D)
-  .map(({ id, date, label, pieceRef, journal, number, lines, amount, status, invoiceId, reversalOfId, validatedAt, auditTrail }: any) =>
-    ({ id, date, label, pieceRef, journal, number, lines, amount, status, invoiceId, reversalOfId, validatedAt, audit: auditTrail.length }))
+  .map(({ id, date, label, pieceRef, journal, number, lines, amount, status, invoiceId, reversalOfId, validatedAt, auditTrail, attachments }: any) =>
+    ({ id, date, label, pieceRef, journal, number, lines: lines.map(({ id: _, ...l }: any) => l), amount, status, invoiceId, reversalOfId, validatedAt, audit: auditTrail.length, attachments }))
   .sort((x: any, y: any) => x.id.localeCompare(y.id)));
 const before = (await call('A', '/bootstrap')).j;
 const sauvegarde = { dossiers: before.dossiers.filter((x: any) => x.id === D), entries: before.entries };
 const restored = await call('A', '/import-backup', sauvegarde);
 t('restauration acceptée', restored.s === 200, restored.j);
-t('écritures restituées à l\'identique (montants, dates, statuts, liens facture, audit)', snapshot(restored.j) === snapshot(before), [snapshot(restored.j).slice(0, 200), snapshot(before).slice(0, 200)]);
+t('écritures restituées à l\'identique (montants, dates, statuts, liens facture, audit, pointage, pièces jointes)', snapshot(restored.j) === snapshot(before), [snapshot(restored.j).slice(0, 200), snapshot(before).slice(0, 200)]);
 const factureApres = restored.j?.invoices?.find((i: any) => i.id === facture.j?.id);
 t('règlement et avoir lettrés conservés', factureApres?.payments?.length === 2 && factureApres.payments.some((p: any) => p.amount === 5000), factureApres);
 const abimee = { ...sauvegarde, entries: [...sauvegarde.entries, { ...sauvegarde.entries.find((e: any) => e.clientDossierId === D), id: 'casse', lines: [{ accountCode: '6011', debit: 5, credit: 0 }] }] };

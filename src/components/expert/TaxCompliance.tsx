@@ -3,6 +3,7 @@ import { JournalEntry, ClientDossier, JournalLine } from '../../types';
 import { Printer, Download, ShieldCheck, QrCode, Lock, FilePen } from 'lucide-react';
 import { computeFlows, computeTva, isoDate } from '../../utils/analytics';
 import { prefixBalance, isLocked, TVA_COLLECTED, TVA_DEDUCTIBLE } from '../../utils/entryLines';
+import { fiscalDeadlines } from '../../utils/fiscalCalendar';
 
 interface TaxComplianceProps {
   entries: JournalEntry[];
@@ -19,7 +20,7 @@ export const TaxCompliance: React.FC<TaxComplianceProps> = ({
   onLock,
   onNewEntry
 }) => {
-  const [taxType, setTaxType] = useState<'tva' | 'dsf'>('tva');
+  const [taxType, setTaxType] = useState<'tva' | 'dsf' | 'calendar'>('tva');
 
   const [month, setMonth] = useState(isoDate(new Date()).slice(0, 7));
   const dossierEntries = entries.filter(e => e.clientDossierId === activeDossier.id);
@@ -117,6 +118,16 @@ export const TaxCompliance: React.FC<TaxComplianceProps> = ({
             >
               Synthèse DSF Annuelle
             </button>
+            <button
+              onClick={() => setTaxType('calendar')}
+              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                taxType === 'calendar'
+                  ? 'bg-gradient-to-r from-[#7024E3] to-[#8B5CF6] text-white shadow-2xs'
+                  : 'text-[#1E084A] hover:bg-[#EDE9FE]'
+              }`}
+            >
+              Calendrier
+            </button>
           </div>
 
           <button
@@ -128,6 +139,52 @@ export const TaxCompliance: React.FC<TaxComplianceProps> = ({
           </button>
         </div>
       </div>
+
+      {taxType === 'calendar' && (() => {
+        const today = isoDate(new Date());
+        const thisYear = Number(today.slice(0, 4));
+        // Exercice précédent et exercice en cours, à partir du mois de la première écriture du dossier.
+        const start = dossierEntries.reduce((min, e) => e.date < min ? e.date : min, today).slice(0, 7);
+        const list = fiscalDeadlines([thisYear - 1, thisYear], activeDossier.lockedUntil)
+          .filter(d => d.periodEnd.slice(0, 7) >= start && (d.due >= `${thisYear}-01-01` || !d.done));
+        return (
+          <div className="bg-white border border-[#DDD6FE] rounded-2xl p-6 shadow-xs space-y-3">
+            <div>
+              <h4 className="font-heading text-lg font-bold text-[#1E084A]">Calendrier des échéances {thisYear}</h4>
+              <p className="text-xs text-[#7C709A]">Une échéance est faite quand sa période est marquée déclarée (TVA) ou l'exercice clôturé (DSF). Dates usuelles UEMOA : vérifiez celles de votre pays. Les rappels arrivent dans les notifications 7 jours avant.</p>
+            </div>
+            <table className="w-full text-xs">
+              <thead className="text-left text-[#7C709A] border-b border-[#EDE9FE]">
+                <tr><th className="py-2">Déclaration</th><th className="py-2">Date limite</th><th className="py-2">État</th><th></th></tr>
+              </thead>
+              <tbody>
+                {list.map(d => {
+                  const late = !d.done && d.due < today;
+                  return (
+                    <tr key={d.key} className="border-b border-[#F5F3FF]">
+                      <td className="py-2 font-semibold text-[#1E084A]">{d.label}</td>
+                      <td className="py-2 font-mono">{d.due.split('-').reverse().join('/')}</td>
+                      <td className="py-2">
+                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${d.done ? 'bg-[#F0FDF4] text-[#166534]' : late ? 'bg-[#FEE2E2] text-[#B91C1C]' : 'bg-[#F5F3FF] text-[#7024E3]'}`}>
+                          {d.done ? 'Déclarée' : late ? 'En retard' : 'À faire'}
+                        </span>
+                      </td>
+                      <td className="py-2 text-right">
+                        {!d.done && d.key.startsWith('tva') && (
+                          <button onClick={() => { setMonth(d.periodEnd.slice(0, 7)); setTaxType('tva'); }} className="text-[11px] font-bold text-[#7024E3] hover:underline">Préparer</button>
+                        )}
+                        {!d.done && d.key.startsWith('dsf') && (
+                          <button onClick={() => { setMonth(`${d.periodEnd.slice(0, 4)}-12`); setTaxType('dsf'); }} className="text-[11px] font-bold text-[#7024E3] hover:underline">Préparer</button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
 
       {taxType === 'tva' && (
         <div className="bg-white border border-[#DDD6FE] rounded-2xl p-6 shadow-xs space-y-5">

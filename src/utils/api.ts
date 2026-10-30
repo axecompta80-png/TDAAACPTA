@@ -1,4 +1,4 @@
-import type { ClientDossier, DossierDirectoryItem, DossierInfo, JournalEntry, AppNotification, PlatformSettings, SYSCOHADAAccount, Invoice, InvoiceInput, RecurringEntry } from '../types';
+import type { ClientDossier, DossierDirectoryItem, DossierInfo, JournalEntry, AppNotification, PlatformSettings, SYSCOHADAAccount, Invoice, InvoiceInput, RecurringEntry, AttachmentMeta, FixedAsset } from '../types';
 
 export interface BootstrapData {
   dossiers: ClientDossier[];
@@ -10,6 +10,7 @@ export interface BootstrapData {
   accounts: SYSCOHADAAccount[];
   invoices: Invoice[];
   recurring: RecurringEntry[];
+  assets: FixedAsset[];
 }
 
 export interface BatchValidateResult {
@@ -72,6 +73,18 @@ export const api = {
   createRecurring: (r: { clientDossierId: string; label: string; journal: string; lines: JournalEntry['lines']; paymentMethod: string; startDate: string }) =>
     request<RecurringEntry>('/recurring', post(r)),
   stopRecurring: (id: string) => request<RecurringEntry>(`/recurring/${id}/stop`, post({})),
+
+  addAttachment: (entryId: string, file: { filename: string; mimeType: string; data: string }) =>
+    request<AttachmentMeta>(`/entries/${entryId}/attachments`, post(file)),
+  deleteAttachment: (id: string) => request<void>(`/attachments/${id}/delete`, post({})),
+  attachmentUrl: (id: string) => `/api/attachments/${id}`,
+  reconcileLines: (clientDossierId: string, lineIds: string[], date: string | null) =>
+    request<{ lineIds: string[]; reconciledOn?: string }>('/lines/reconcile', post({ clientDossierId, lineIds, date })),
+
+  createAsset: (a: Omit<FixedAsset, 'id'>) => request<FixedAsset>('/assets', post(a)),
+  deleteAsset: (id: string) => request<void>(`/assets/${id}/delete`, post({})),
+  depreciateAssets: (clientDossierId: string, year: number) =>
+    request<{ entries: JournalEntry[]; assets: FixedAsset[] }>('/assets/depreciate', post({ clientDossierId, year })),
 
   // Plan comptable (sous-comptes propres à un dossier)
   createAccount: (a: { dossierId: string; parentCode: string; code: string; label: string }) =>

@@ -469,7 +469,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
                     {/* Date & Ref */}
                     <td className="p-3 whitespace-nowrap font-mono text-[12px]">
                       <div className="font-bold text-[#1E084A]">{entry.date}</div>
-                      <div className="text-[10.5px] text-[#7C709A]">{entry.journal}{entry.number ? ` n° ${entry.number}` : ''} • {entry.pieceRef}</div>
+                      <div className="text-[10.5px] text-[#7C709A]">{entry.journal}{entry.number ? ` n° ${entry.number}` : ''} • {entry.pieceRef}{entry.attachments?.length ? ` • 📎 ${entry.attachments.length}` : ''}</div>
                     </td>
 
                     {/* Label */}
@@ -560,7 +560,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
                         <button
                           onClick={() => onViewAuditTrail(entry)}
                           className="p-1.5 text-[#1E084A] hover:bg-[#F5F3FF] rounded-lg transition-colors"
-                          title="Voir la piste d'audit horodatée"
+                          title="Détail, pièces justificatives et piste d'audit"
                         >
                           <History className="w-3.5 h-3.5" />
                         </button>

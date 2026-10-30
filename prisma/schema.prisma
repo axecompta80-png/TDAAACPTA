@@ -139,32 +139,33 @@ enum SoundType {
 // Une comptabilité. isMain = la comptabilité de l'entreprise elle-même (une par organisation) ;
 // les autres sont des dossiers confiés chacun à un propriétaire (User.dossierId).
 model ClientDossier {
-  id                  String       @id @default(uuid())
-  organizationId      String
-  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  isMain              Boolean      @default(false)
-  owner               User?        @relation("DossierOwner")
-  ownerName           String?
-  name                String
-  managerName         String
-  phone               String
-  activity            String
-  city                String
-  country             String
-  rccm                String
-  ifu                 String
-  regimeFiscal        RegimeFiscal
-  currency            String
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  isMain         Boolean      @default(false)
+  owner          User?        @relation("DossierOwner")
+  ownerName      String?
+  name           String
+  managerName    String
+  phone          String
+  activity       String
+  city           String
+  country        String
+  rccm           String
+  ifu            String
+  regimeFiscal   RegimeFiscal
+  currency       String
   // Écritures datées jusqu'à ce jour inclus : bloquées (période déclarée ou exercice clôturé).
-  lockedUntil         DateTime?    @db.Date
-  createdAt           DateTime     @default(now())
-  updatedAt           DateTime     @updatedAt
+  lockedUntil    DateTime?    @db.Date
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   journalEntries JournalEntry[]
   notifications  AppNotification[]
   accounts       SyscohadaAccount[]
   invoices       Invoice[]
   recurring      RecurringEntry[]
+  assets         FixedAsset[]
   settings       PlatformSettings?
 
   @@index([organizationId])
@@ -172,9 +173,9 @@ model ClientDossier {
 }
 
 model Organization {
-  id        String   @id @default(uuid())
+  id        String          @id @default(uuid())
   name      String
-  createdAt DateTime @default(now())
+  createdAt DateTime        @default(now())
   users     User[]
   dossiers  ClientDossier[]
 
@@ -231,9 +232,10 @@ model JournalEntry {
   reversalOf            JournalEntry?     @relation("Reversal", fields: [reversalOfId], references: [id], onDelete: SetNull)
   reversals             JournalEntry[]    @relation("Reversal")
 
-  lines      JournalLine[]
-  auditTrail AuditLog[]
-  payments   InvoicePayment[]
+  lines       JournalLine[]
+  auditTrail  AuditLog[]
+  payments    InvoicePayment[]
+  attachments Attachment[]
 
   @@unique([clientDossierId, journal, number])
   @@index([clientDossierId])
@@ -263,30 +265,67 @@ model RecurringEntry {
 
 // Ligne d'écriture : un compte, au débit OU au crédit. Total débit = total crédit par écriture.
 model JournalLine {
-  id          String           @id @default(uuid())
-  entryId     String
-  entry       JournalEntry     @relation(fields: [entryId], references: [id], onDelete: Cascade)
-  position    Int
-  accountCode String
-  account     SyscohadaAccount @relation(fields: [accountCode], references: [code])
-  label       String?
-  debit       Decimal          @default(0) @db.Decimal(14, 2)
-  credit      Decimal          @default(0) @db.Decimal(14, 2)
+  id           String           @id @default(uuid())
+  entryId      String
+  entry        JournalEntry     @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  position     Int
+  accountCode  String
+  account      SyscohadaAccount @relation(fields: [accountCode], references: [code])
+  label        String?
+  debit        Decimal          @default(0) @db.Decimal(14, 2)
+  credit       Decimal          @default(0) @db.Decimal(14, 2)
+  /// Rapprochement bancaire : date du relevé sur lequel la ligne a été pointée.
+  reconciledOn DateTime?        @db.Date
 
   @@index([entryId])
   @@index([accountCode])
   @@map("journal_lines")
 }
 
+/// Pièce justificative (facture, reçu, relevé) jointe à une écriture.
+/// ponytail: fichiers stockés en base (bytea) ; passer à un stockage objet si le volume dépasse quelques Go.
+model Attachment {
+  id          String       @id @default(uuid())
+  entryId     String
+  entry       JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  filename    String
+  mimeType    String
+  size        Int
+  data        Bytes
+  createdById String?
+  createdAt   DateTime     @default(now())
+
+  @@index([entryId])
+  @@map("attachments")
+}
+
+/// Immobilisation amortie en linéaire, prorata temporis.
+model FixedAsset {
+  id                 String        @id @default(uuid())
+  clientDossierId    String
+  clientDossier      ClientDossier @relation(fields: [clientDossierId], references: [id], onDelete: Cascade)
+  label              String
+  accountCode        String
+  acquisitionDate    DateTime      @db.Date
+  cost               Decimal       @db.Decimal(14, 2)
+  durationYears      Int
+  /// Dernier exercice dont la dotation a été passée.
+  depreciatedThrough Int?
+  createdAt          DateTime      @default(now())
+
+  @@index([clientDossierId])
+  @@map("fixed_assets")
+}
+
 model AuditLog {
-  id              String       @id @default(uuid())
-  journalEntryId  String
-  journalEntry    JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
-  timestamp       DateTime     @default(now())
-  action          AuditAction
-  author          String
-  notes           String?
-  previousValue   String?
+  id             String       @id @default(uuid())
+  journalEntryId String
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  timestamp      DateTime     @default(now())
+  action         AuditAction
+  author         String
+  notes          String?
+  previousValue  String?
 
   @@index([journalEntryId])
   @@map("audit_logs")
@@ -349,13 +388,12 @@ model User {
   updatedAt    DateTime @updatedAt
 
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   // null : compte principal de l'entreprise ; sinon propriétaire de ce seul dossier.
   dossierId      String?        @unique
   dossier        ClientDossier? @relation("DossierOwner", fields: [dossierId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
-
   @@map("users")
 }
 

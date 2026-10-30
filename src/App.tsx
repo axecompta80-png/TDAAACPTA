@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ClientDossier, DossierDirectoryItem, DossierInfo, JournalEntry, AppNotification, NotificationType, NotificationCategory, PlatformSettings, Invoice, RecurringEntry } from './types';
+import { ClientDossier, DossierDirectoryItem, DossierInfo, JournalEntry, AppNotification, NotificationType, NotificationCategory, PlatformSettings, Invoice, RecurringEntry, ExpertTab, FixedAsset } from './types';
 import { registerCustomAccounts } from './data/syscohadaPlan';
 import { showDeviceNotification } from './utils/deviceNotify';
 import { DEFAULT_PLATFORM_SETTINGS } from './data/initialSettings';
@@ -19,6 +19,8 @@ import { GeneralLedger } from './components/expert/GeneralLedger';
 import { FinancialStatements } from './components/expert/FinancialStatements';
 import { TaxCompliance } from './components/expert/TaxCompliance';
 import { AuditTrailModal } from './components/expert/AuditTrailModal';
+import { BankReconciliation } from './components/expert/BankReconciliation';
+import { FixedAssets } from './components/expert/FixedAssets';
 import { EntryFormModal } from './components/expert/EntryFormModal';
 import { ExcelImportModal } from './components/ExcelImportModal';
 import { CompanySetup } from './components/onboarding/CompanySetup';
@@ -34,9 +36,11 @@ import {
   TrendingUp,
   Sparkles,
   FileText,
-  ListTree
+  ListTree,
+  Landmark,
+  Factory
 } from 'lucide-react';
-import { accountsSummary, nextMonthly } from './utils/entryLines';
+import { accountsSummary, nextMonthly, isLocked } from './utils/entryLines';
 
 interface AppProps {
   currentUser: CurrentUser;
@@ -63,6 +67,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [recurring, setRecurring] = useState<RecurringEntry[]>([]);
+  const [assets, setAssets] = useState<FixedAsset[]>([]);
   // Incrémenté quand le plan comptable change (les comptes vivent hors de l'état React).
   const [, setPlanVersion] = useState(0);
 
@@ -77,6 +82,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
         registerCustomAccounts(data.accounts ?? []);
         setInvoices(data.invoices ?? []);
         setRecurring(data.recurring ?? []);
+        setAssets(data.assets ?? []);
         setSettingsByDossier(data.settingsByDossier);
         setDossiers(data.dossiers);
         setDirectory(data.directory);
@@ -102,7 +108,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
   }, []);
 
   // Expert navigation tab
-  const [expertTab, setExpertTab] = useState<'portfolio' | 'journal' | 'invoices' | 'accounts' | 'ledger' | 'financials' | 'tax'>('journal');
+  const [expertTab, setExpertTab] = useState<ExpertTab>('journal');
   const showExpertTab = (tab: typeof expertTab) => setExpertTab(tab === 'portfolio' && !isMainAccount ? 'journal' : tab);
   
   // Modals & Panels
@@ -184,7 +190,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
     category: NotificationCategory = 'compta',
     options?: {
       actionLabel?: string;
-      actionPayload?: { mode?: 'simplified' | 'expert'; expertTab?: 'portfolio' | 'journal' | 'invoices' | 'accounts' | 'ledger' | 'financials' | 'tax' };
+      actionPayload?: { mode?: 'simplified' | 'expert'; expertTab?: ExpertTab };
     }
   ) => {
     const newNotif: AppNotification = {
@@ -657,6 +663,20 @@ export default function App({ currentUser, onLogout }: AppProps) {
                   <Receipt className="w-4 h-4" />
                   <span>Fiscalité & TVA</span>
                 </button>
+                {([['bank', Landmark, 'Rapprochement'], ['assets', Factory, 'Immobilisations']] as const).map(([tab, Icon, label]) => (
+                  <button
+                    key={tab}
+                    onClick={() => setExpertTab(tab)}
+                    className={`px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                      expertTab === tab
+                        ? 'bg-gradient-to-r from-[#7024E3] to-[#8B5CF6] text-white shadow-xs'
+                        : 'text-[#C4B5FD] hover:bg-[#2A0E68] hover:text-white'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    <span>{label}</span>
+                  </button>
+                ))}
               </div>
 
               {/* Right Side: Dossier Indicator */}
@@ -750,6 +770,32 @@ export default function App({ currentUser, onLogout }: AppProps) {
                 onNewEntry={setEntryForm}
               />
             )}
+
+            {expertTab === 'bank' && (
+              <BankReconciliation
+                entries={liveEntries}
+                activeDossier={activeDossier}
+                onOpenEntry={setSelectedAuditEntry}
+                onError={showToast}
+                onLinesReconciled={(ids, reconciledOn) => {
+                  const set = new Set(ids);
+                  setEntries(prev => prev.map(e => e.lines.some(l => l.id && set.has(l.id))
+                    ? { ...e, lines: e.lines.map(l => l.id && set.has(l.id) ? { ...l, reconciledOn } : l) }
+                    : e));
+                }}
+              />
+            )}
+
+            {expertTab === 'assets' && (
+              <FixedAssets
+                assets={assets}
+                activeDossier={activeDossier}
+                onAssetsChange={setAssets}
+                onEntriesAdded={added => setEntries(prev => [...added, ...prev])}
+                onRecordPurchase={setEntryForm}
+                onToast={showToast}
+              />
+            )}
           </div>
         )}
       </main>
@@ -787,6 +833,8 @@ export default function App({ currentUser, onLogout }: AppProps) {
         <AuditTrailModal
           entry={selectedAuditEntry}
           onClose={() => setSelectedAuditEntry(null)}
+          locked={isLocked(selectedAuditEntry.date, activeDossier.lockedUntil)}
+          onAttachmentsChange={(id, attachments) => setEntries(prev => prev.map(e => e.id === id ? { ...e, attachments } : e))}
         />
       )}
 
