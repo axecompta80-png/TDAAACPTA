@@ -5,7 +5,10 @@ export const SYSCOHADA_ACCOUNTS: SYSCOHADAAccount[] = [
   { code: '101', label: 'Capital social', classNumber: 1, category: 'bilan_passif' },
   { code: '102', label: 'Capital personnel (exploitant individuel)', classNumber: 1, category: 'bilan_passif' },
   { code: '111', label: 'Réserve légale', classNumber: 1, category: 'bilan_passif' },
+  { code: '121', label: 'Report à nouveau créditeur', classNumber: 1, category: 'bilan_passif' },
+  { code: '129', label: 'Report à nouveau débiteur', classNumber: 1, category: 'bilan_passif' },
   { code: '131', label: 'Résultat net de l’exercice (Bénéfice)', classNumber: 1, category: 'bilan_passif' },
+  { code: '139', label: 'Résultat net de l’exercice (Perte)', classNumber: 1, category: 'bilan_passif' },
   { code: '162', label: 'Emprunts et dettes bancaires', classNumber: 1, category: 'bilan_passif' },
   
   // Classe 2 : Actif Immobilisé
@@ -25,12 +28,17 @@ export const SYSCOHADA_ACCOUNTS: SYSCOHADAAccount[] = [
   
   // Classe 4 : Comptes de Tiers
   { code: '4011', label: 'Fournisseurs d’exploitation', classNumber: 4, category: 'bilan_passif' },
+  { code: '4091', label: 'Fournisseurs, avances et acomptes versés', classNumber: 4, category: 'bilan_actif' },
   { code: '4111', label: 'Clients ordinaires', classNumber: 4, category: 'bilan_actif' },
+  { code: '4191', label: 'Clients, avances et acomptes reçus', classNumber: 4, category: 'bilan_passif' },
   { code: '4211', label: 'Personnel, salaires et rémunérations dues', classNumber: 4, category: 'bilan_passif' },
   { code: '4311', label: 'Sécurité sociale (CNPS / CNSS / IPRES)', classNumber: 4, category: 'bilan_passif' },
+  { code: '4421', label: 'État, impôts et taxes à payer', classNumber: 4, category: 'bilan_passif' },
   { code: '4431', label: 'État, TVA facturée sur ventes (18%)', classNumber: 4, category: 'bilan_passif' },
+  { code: '4451', label: 'État, TVA récupérable sur immobilisations', classNumber: 4, category: 'bilan_actif' },
   { code: '4452', label: 'État, TVA déductible sur achats et services (18%)', classNumber: 4, category: 'bilan_actif' },
   { code: '4441', label: 'État, TVA due / à décaisser', classNumber: 4, category: 'bilan_passif' },
+  { code: '4449', label: 'État, crédit de TVA à reporter', classNumber: 4, category: 'bilan_actif' },
   { code: '4471', label: 'État, Impôts sur les bénéfices & acomptes', classNumber: 4, category: 'bilan_passif' },
   { code: '4711', label: 'Compte d’attente créditeur/débiteur', classNumber: 4, category: 'bilan_actif' },
 
@@ -54,10 +62,12 @@ export const SYSCOHADA_ACCOUNTS: SYSCOHADAAccount[] = [
   { code: '6241', label: 'Entretien et réparations matériels', classNumber: 6, category: 'charge' },
   { code: '6271', label: 'Frais de télécommunications & Internet', classNumber: 6, category: 'charge' },
   { code: '6311', label: 'Frais bancaires et commissions Mobile Money', classNumber: 6, category: 'charge' },
-  { code: '6411', label: 'Salaires et émoluments des employés', classNumber: 6, category: 'charge' },
-  { code: '6451', label: 'Charges sociales patronales', classNumber: 6, category: 'charge' },
-  { code: '6811', label: 'Dotations aux amortissements d’exploitation', classNumber: 6, category: 'charge' },
+  { code: '6411', label: 'Impôts et taxes directs (patente, taxes foncières)', classNumber: 6, category: 'charge' },
   { code: '6581', label: 'Frais divers de gestion courante', classNumber: 6, category: 'charge' },
+  { code: '6611', label: 'Appointements, salaires et commissions', classNumber: 6, category: 'charge' },
+  { code: '6641', label: 'Charges sociales sur rémunérations (part patronale)', classNumber: 6, category: 'charge' },
+  { code: '6711', label: 'Intérêts des emprunts', classNumber: 6, category: 'charge' },
+  { code: '6811', label: 'Dotations aux amortissements d’exploitation', classNumber: 6, category: 'charge' },
 
   // Classe 7 : Produits des Activités Ordinaires
   { code: '7011', label: 'Ventes de marchandises au comptant', classNumber: 7, category: 'produit' },
@@ -69,7 +79,8 @@ export const SYSCOHADA_ACCOUNTS: SYSCOHADAAccount[] = [
   // Classe 8 : Comptes Hors Activités Ordinaires (HAO)
   { code: '8111', label: 'Valeurs comptables des cessions d’immobilisations', classNumber: 8, category: 'charge' },
   { code: '8211', label: 'Produits des cessions d’immobilisations', classNumber: 8, category: 'produit' },
-  { code: '8511', label: 'Dons et subventions exceptionnelles reçus', classNumber: 8, category: 'produit' }
+  { code: '8411', label: 'Produits HAO (dons et subventions exceptionnels reçus)', classNumber: 8, category: 'produit' },
+  { code: '8911', label: 'Impôt sur le résultat de l’exercice', classNumber: 8, category: 'charge' }
 ];
 
 /**

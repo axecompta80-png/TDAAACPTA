@@ -8,6 +8,7 @@ import { validateDossierInput, validateEntryInput, identifier, DossierInput } fr
 import { findAccessibleDossier } from '../access';
 import { buildBootstrapPayload } from './bootstrap';
 import { dossierData } from './dossiers';
+import { defaultPieceRef } from './entries';
 
 const router = Router();
 
@@ -66,6 +67,7 @@ router.post('/import-backup', handler(async (req, res) => {
   const errors: string[] = [];
   const usedIds = new Set<string>();
   const entryRows: Prisma.JournalEntryCreateManyInput[] = [];
+  const lineRows: Prisma.JournalLineCreateManyInput[] = [];
   const auditRows: Prisma.AuditLogCreateManyInput[] = [];
   entries.forEach((raw: any, i) => {
     const dossierId = identifier(raw?.clientDossierId);
@@ -75,7 +77,7 @@ router.post('/import-backup', handler(async (req, res) => {
     const parsed = validateEntryInput(raw, { trusted: true });
     if (!parsed.ok) return void errors.push(`${where} : ${(parsed as { error: string }).error}`);
     const e = parsed.data;
-    const unknown = [e.debitAccountCode, e.creditAccountCode].filter(c => !accountOk(c, dossierId));
+    const unknown = [...new Set(e.lines.map(l => l.accountCode))].filter(c => !accountOk(c, dossierId));
     if (unknown.length) return void errors.push(`${where} : compte inconnu ${unknown.join(', ')}`);
 
     let id = identifier(raw?.id);
@@ -87,10 +89,9 @@ router.post('/import-backup', handler(async (req, res) => {
       date: new Date(e.date),
       label: e.label,
       pieceRef: e.pieceRef,
-      debitAccountCode: e.debitAccountCode,
-      creditAccountCode: e.creditAccountCode,
+      journal: e.journal,
+      number: Number(raw?.number) || 0, // renuméroté ci-dessous
       amount: e.amount,
-      tvaAmount: e.tvaAmount,
       clientDossierId: dossierId,
       status: e.status as any,
       detectedAnomaly: e.detectedAnomaly,
@@ -103,7 +104,9 @@ router.post('/import-backup', handler(async (req, res) => {
       validatedById: optionalId(raw?.validatedById),
       validatedAt: optionalDate(raw?.validatedAt),
       invoiceId: invoiceId && invoiceDossier.get(invoiceId) === dossierId ? invoiceId : null,
+      reversalOfId: optionalId(raw?.reversalOfId),
     });
+    e.lines.forEach((l, position) => lineRows.push({ entryId: id!, position, accountCode: l.accountCode, label: l.label, debit: l.debit, credit: l.credit }));
     for (const a of e.auditTrail) {
       auditRows.push({
         id: a.id,
@@ -116,6 +119,25 @@ router.post('/import-backup', handler(async (req, res) => {
       });
     }
   });
+  // Numéros d'ordre conservés ; une écriture sans numéro valable (ancienne sauvegarde, doublon) prend la suite du journal.
+  const used = new Map<string, Set<number>>();
+  const keyOf = (row: Prisma.JournalEntryCreateManyInput) => `${row.clientDossierId}|${row.journal}`;
+  const missing: Prisma.JournalEntryCreateManyInput[] = [];
+  for (const row of entryRows) {
+    const set = used.get(keyOf(row)) ?? new Set<number>();
+    used.set(keyOf(row), set);
+    if (Number.isInteger(row.number) && row.number > 0 && !set.has(row.number)) set.add(row.number);
+    else missing.push(row);
+  }
+  for (const row of missing.sort((a, b) => +new Date(a.date) - +new Date(b.date))) {
+    const set = used.get(keyOf(row))!;
+    row.number = Math.max(0, ...set) + 1;
+    set.add(row.number);
+    if (!row.pieceRef) row.pieceRef = defaultPieceRef(row.journal!, row.number);
+  }
+  // Une contre-passation ne pointe que vers une écriture restaurée.
+  for (const row of entryRows) if (row.reversalOfId && !usedIds.has(row.reversalOfId)) row.reversalOfId = null;
+
   if (errors.length) {
     return res.status(400).json({
       error: `Sauvegarde non restaurée, rien n'a été modifié. ${errors.length} écriture(s) refusée(s) : ${errors.slice(0, 3).join(' ; ')}${errors.length > 3 ? '…' : ''}`,
@@ -129,7 +151,12 @@ router.post('/import-backup', handler(async (req, res) => {
     await tx.appNotification.deleteMany({ where: { dossierId: { in: dossierIds } } });
     await tx.journalEntry.deleteMany({ where: { clientDossierId: { in: dossierIds } } });
     for (const [id, data] of restorable) await tx.clientDossier.update({ where: { id }, data: dossierData(data) });
-    await tx.journalEntry.createMany({ data: entryRows });
+    // Contre-passations après leurs originaux (clé étrangère).
+    await tx.journalEntry.createMany({ data: entryRows.map(r => ({ ...r, reversalOfId: null })) });
+    for (const r of entryRows.filter(r => r.reversalOfId)) {
+      await tx.journalEntry.update({ where: { id: r.id! }, data: { reversalOfId: r.reversalOfId } });
+    }
+    await tx.journalLine.createMany({ data: lineRows });
     await tx.auditLog.createMany({ data: auditRows, skipDuplicates: true });
     const kept = payments.filter(p => usedIds.has(p.entryId));
     if (kept.length) await tx.invoicePayment.createMany({ data: kept });

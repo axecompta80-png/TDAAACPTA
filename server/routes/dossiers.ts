@@ -4,7 +4,7 @@ import { serializeDossier, REGIME_FISCAL_TO_DB } from '../mappers';
 import { getAuthUser } from '../auth';
 import { dossierScopeWhere, findAccessibleDossier, isMainAccount, NO_ACCESS } from '../access';
 import { handler } from '../http';
-import { validateDossierInput, identifier, unwrap, DossierInput } from '../validation';
+import { validateDossierInput, identifier, unwrap, DossierInput, isoDate } from '../validation';
 import { createDefaultPlatformSettings, copySettings } from '../seedData';
 import { DOSSIER_INCLUDE, ENTRY_INCLUDE } from './bootstrap';
 
@@ -84,7 +84,7 @@ router.post('/dossiers', handler(async (req, res) => {
   if (!main) return res.status(400).json({ error: "Renseignez d'abord les informations de l'entreprise." });
 
   const created = await prisma.$transaction(async tx => {
-    const { id: _id, isMain: _m, createdAt: _c, updatedAt: _u, settings, ...fiscal } = main;
+    const { id: _id, isMain: _m, createdAt: _c, updatedAt: _u, lockedUntil: _l, settings, ...fiscal } = main;
     const row = await tx.clientDossier.create({ data: { ...fiscal, name: cleanName, ownerName: cleanOwner || null, isMain: false } });
     if (settings) await tx.platformSettings.create({ data: { ...copySettings(settings), dossierId: row.id } });
     else await createDefaultPlatformSettings(tx as any, row.id);
@@ -103,6 +103,40 @@ router.post('/dossiers/:id/update', handler(async (req, res) => {
   const d = unwrap(validateDossierInput(req.body));
   const updated = await prisma.clientDossier.update({ where: { id }, data: dossierData(d), include: DOSSIER_INCLUDE });
   if (existing.isMain) await prisma.organization.update({ where: { id: existing.organizationId }, data: { name: d.name } });
+  res.json(serializeDossier(updated));
+}));
+
+/**
+ * Blocage des écritures jusqu'à une date incluse : période déclarée (TVA du mois) ou exercice clôturé
+ * (until = 31/12). Avancer exige que toutes les écritures de la période soient validées ou annulées.
+ * Reculer (débloquer) est réservé au compte principal. Body : { until: 'AAAA-MM-JJ' | null }.
+ */
+router.post('/dossiers/:id/lock', handler(async (req, res) => {
+  const id = identifier(req.params.id);
+  const dossier = id ? await findAccessibleDossier(req, id) : null;
+  if (!dossier) return res.status(404).json({ error: 'Dossier introuvable.' });
+  const raw = (req.body ?? {}).until;
+  const until = raw === null ? null : isoDate(raw);
+  if (raw !== null && !until) return res.status(400).json({ error: 'Date de blocage invalide.' });
+
+  const current = dossier.lockedUntil?.toISOString().slice(0, 10) ?? null;
+  const backwards = current && (!until || until < current);
+  if (backwards && !isMainAccount(req)) {
+    return res.status(403).json({ error: "Débloquer une période est réservé au compte principal de l'entreprise." });
+  }
+  if (until && !backwards) {
+    const open = await prisma.journalEntry.count({
+      where: { clientDossierId: dossier.id, date: { lte: new Date(until) }, status: { in: ['draft', 'pending_review', 'anomaly'] } },
+    });
+    if (open) {
+      return res.status(409).json({ error: `${open} écriture(s) de la période ne sont pas validées : validez-les ou annulez-les avant de bloquer.` });
+    }
+  }
+  const updated = await prisma.clientDossier.update({
+    where: { id: dossier.id },
+    data: { lockedUntil: until ? new Date(until) : null },
+    include: DOSSIER_INCLUDE,
+  });
   res.json(serializeDossier(updated));
 }));
 

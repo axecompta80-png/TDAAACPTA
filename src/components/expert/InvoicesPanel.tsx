@@ -1,15 +1,20 @@
-import React, { useState } from 'react';
-import { ClientDossier, Invoice, InvoiceInput, JournalEntry, PaymentMethod } from '../../types';
+import React, { useEffect, useState } from 'react';
+import { ClientDossier, Invoice, InvoiceInput, InvoiceKind, JournalEntry, PaymentMethod } from '../../types';
 import { CurrentUser } from '../../utils/authApi';
 import { api } from '../../utils/api';
 import { accountsForDossier } from '../../data/syscohadaPlan';
 import { PAYMENT_METHOD_LABEL } from '../../utils/paymentAccounts';
-import { computeInvoiceTotals, computeAgedBalance, AGING_BUCKETS, paidAmount, remainingAmount, settlementState } from '../../utils/invoices';
+import { computeInvoiceTotals, computeAgedBalance, AGING_BUCKETS, paidAmount, remainingAmount, settlementState, settlementAmount, isSupplierSide, KIND_LABEL } from '../../utils/invoices';
 import { downloadXlsx, fileSafe } from '../../utils/excelExport';
-import { FileText, Plus, X, Check, Ban, Edit3, Wallet, Printer, FileSpreadsheet, Trash2, Link2 } from 'lucide-react';
+import { FileText, Plus, X, Check, Ban, Edit3, Wallet, Printer, FileSpreadsheet, Trash2, Link2, Undo2, BellRing } from 'lucide-react';
+import { creditCodes, debitCodes } from '../../utils/entryLines';
 
 interface InvoicesPanelProps {
   invoices: Invoice[];
+  /** Demande d'ouverture d'une nouvelle facture (bouton « Nouveau »). */
+  request?: { kind: 'sale' | 'purchase'; n: number };
+  /** Facture supprimée (brouillon). */
+  onInvoiceDeleted?: (id: string) => void;
   entries: JournalEntry[];
   activeDossier: ClientDossier;
   currentUser: CurrentUser;
@@ -42,14 +47,53 @@ const inputCls = 'w-full p-2 bg-[#F8F7FD] border border-[#DDD6FE] rounded-lg tex
 const btn = 'p-1.5 rounded-lg transition-colors';
 
 export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
-  invoices, entries, activeDossier, currentUser, onInvoiceChanged, onEntriesChanged, notify,
+  invoices: allInvoices, entries, activeDossier, currentUser, onInvoiceChanged, onInvoiceDeleted, onEntriesChanged, notify, request,
 }) => {
+  const [side, setSide] = useState<'clients' | 'suppliers'>('clients');
   const [view, setView] = useState<'list' | 'aged'>('list');
-  const [editing, setEditing] = useState<Invoice | 'new' | null>(null);
+  const [editing, setEditing] = useState<Invoice | { kind: InvoiceKind; from?: Invoice } | null>(null);
   const [lettering, setLettering] = useState<Invoice | null>(null);
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    if (!request) return;
+    setSide(request.kind === 'purchase' ? 'suppliers' : 'clients');
+    setView('list');
+    setEditing({ kind: request.kind });
+  }, [request?.n]);
+
+  const suppliers = side === 'suppliers';
+  const invoices = allInvoices.filter(i => isSupplierSide(i.kind) === suppliers);
   const aged = computeAgedBalance(invoices, today());
+  const tiers = suppliers ? 'Fournisseur' : 'Client';
+  const numberOf = (id?: string) => allInvoices.find(i => i.id === id)?.number;
+  const creditedOn = (inv: Invoice) => allInvoices
+    .filter(c => c.originalInvoiceId === inv.id && c.status !== 'cancelled').reduce((s, c) => s + c.totalTTC, 0);
+
+  const remove = (inv: Invoice) => {
+    if (!window.confirm(`Supprimer définitivement le brouillon ${inv.number} ?`)) return;
+    run(async () => {
+      await api.deleteInvoice(inv.id);
+      onInvoiceDeleted?.(inv.id);
+      notify(`${inv.number} supprimée.`);
+    });
+  };
+
+  /** Relance d'un impayé : e-mail si l'adresse est connue, sinon WhatsApp, sinon texte copié. */
+  const remind = (inv: Invoice) => {
+    const due = remainingAmount(inv);
+    const text = `Bonjour ${inv.customerName},\n\nSauf erreur de notre part, la facture ${inv.number} du ${inv.date.split('-').reverse().join('/')} `
+      + `reste due pour ${fmt(due)} ${activeDossier.currency} (échéance le ${inv.dueDate.split('-').reverse().join('/')}).\n`
+      + `Merci de bien vouloir procéder à son règlement.\n\nCordialement,\n${activeDossier.name} — ${activeDossier.phone}`;
+    if (inv.customerEmail) {
+      window.open(`mailto:${inv.customerEmail}?subject=${encodeURIComponent(`Relance facture ${inv.number}`)}&body=${encodeURIComponent(text)}`);
+    } else if (inv.customerPhone) {
+      window.open(`https://wa.me/${inv.customerPhone.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
+    } else {
+      navigator.clipboard?.writeText(text);
+      notify('Aucun e-mail ni téléphone : texte de relance copié dans le presse-papiers.');
+    }
+  };
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -59,8 +103,9 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
   const validate = (inv: Invoice) => run(async () => {
     const r = await api.validateInvoice(inv.id);
     onInvoiceChanged(r.invoice);
+    r.related?.forEach(onInvoiceChanged);
     onEntriesChanged(r.entries);
-    notify(`Facture ${inv.number} validée : ${r.entries.length} écriture(s) générée(s).`);
+    notify(`${KIND_LABEL[inv.kind]} ${inv.number} validée : ${r.entries.length} écriture(s) générée(s).`);
   });
   const cancel = (inv: Invoice) => {
     const reason = window.prompt(`Motif de l'annulation de ${inv.number} (facultatif) :`, '');
@@ -68,26 +113,27 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
     run(async () => {
       const r = await api.cancelInvoice(inv.id, reason);
       onInvoiceChanged(r.invoice);
+      r.related?.forEach(onInvoiceChanged);
       onEntriesChanged(r.entries);
       notify(`Facture ${inv.number} annulée.`);
     });
   };
 
   const exportXlsx = () => {
-    const name = `Factures_${fileSafe(activeDossier.name)}_${today()}`;
+    const name = `Factures_${suppliers ? 'fournisseurs' : 'clients'}_${fileSafe(activeDossier.name)}_${today()}`;
     downloadXlsx(name, [
       {
         name: 'Balance âgée',
         rows: [
-          ['Client', 'Factures', ...AGING_BUCKETS.map(b => b.label), 'Total dû'],
+          [tiers, 'Factures', ...AGING_BUCKETS.map(b => b.label), 'Total dû'],
           ...[...aged.rows, aged.totals].map(r => [r.customer, r.invoices, ...AGING_BUCKETS.map(b => r.buckets[b.key]), r.total]),
         ],
       },
       {
         name: 'Factures',
         rows: [
-          ['N°', 'Date', 'Échéance', 'Client', 'Mode', 'HT', 'TVA', 'TTC', 'Réglé', 'Reste dû', 'Statut'],
-          ...invoices.map(i => [i.number, i.date, i.dueDate, i.customerName, i.mode === 'cash' ? 'Comptant' : 'Crédit',
+          ['N°', 'Type', 'Date', 'Échéance', tiers, 'Mode', 'HT', 'TVA', 'TTC', 'Réglé', 'Reste dû', 'Statut'],
+          ...invoices.map(i => [i.number, KIND_LABEL[i.kind], i.date, i.dueDate, i.customerName, i.mode === 'cash' ? 'Comptant' : 'Crédit',
             i.totalHT, i.totalTVA, i.totalTTC, paidAmount(i), remainingAmount(i), STATUS[i.status].label]),
         ],
       },
@@ -100,10 +146,18 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
         <div>
           <h3 className="font-heading text-xl font-bold text-[#1E084A]">Factures, Lettrage & Balance âgée</h3>
           <p className="text-xs text-[#7C709A]">
-            {invoices.length} facture(s) • Créances clients restant dues : <b className="text-[#1E084A]">{fmt(aged.totals.total)} FCFA</b>
+            {invoices.length} facture(s) • {suppliers ? 'Dettes fournisseurs restant à payer' : 'Créances clients restant dues'} : <b className="text-[#1E084A]">{fmt(aged.totals.total)} FCFA</b>
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <div className="bg-[#F8F7FD] p-1 rounded-xl border border-[#DDD6FE] flex">
+            {(['clients', 'suppliers'] as const).map(v => (
+              <button key={v} onClick={() => setSide(v)}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg ${side === v ? 'bg-[#1E084A] text-white' : 'text-[#1E084A] hover:bg-[#EDE9FE]'}`}>
+                {v === 'clients' ? 'Clients' : 'Fournisseurs'}
+              </button>
+            ))}
+          </div>
           <div className="bg-[#F8F7FD] p-1 rounded-xl border border-[#DDD6FE] flex">
             {(['list', 'aged'] as const).map(v => (
               <button key={v} onClick={() => setView(v)}
@@ -115,8 +169,8 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
           <button onClick={exportXlsx} className="px-3.5 py-2 bg-[#F8F7FD] text-[#1E084A] text-xs font-bold rounded-xl border border-[#DDD6FE] hover:bg-[#EDE9FE] flex items-center gap-1.5">
             <FileSpreadsheet className="w-3.5 h-3.5 text-[#10B981]" /> Export Excel
           </button>
-          <button onClick={() => setEditing('new')} className="px-4 py-2 bg-gradient-to-r from-[#7024E3] to-[#8B5CF6] text-white text-xs font-bold rounded-xl flex items-center gap-1.5">
-            <Plus className="w-4 h-4" /> Nouvelle facture
+          <button onClick={() => setEditing({ kind: suppliers ? 'purchase' : 'sale' })} className="px-4 py-2 bg-gradient-to-r from-[#7024E3] to-[#8B5CF6] text-white text-xs font-bold rounded-xl flex items-center gap-1.5">
+            <Plus className="w-4 h-4" /> {suppliers ? 'Facture fournisseur' : 'Nouvelle facture'}
           </button>
         </div>
       </div>
@@ -128,7 +182,7 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
               <thead>
                 <tr className="bg-[#1E084A] text-white uppercase font-mono text-[11px]">
                   <th className="p-3">N° / Date</th>
-                  <th className="p-3">Client</th>
+                  <th className="p-3">{tiers}</th>
                   <th className="p-3">Échéance</th>
                   <th className="p-3 text-right">TTC</th>
                   <th className="p-3 text-right">Reste dû</th>
@@ -138,26 +192,31 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
               </thead>
               <tbody className="divide-y divide-[#EDE9FE]">
                 {invoices.length === 0 && (
-                  <tr><td colSpan={7} className="p-6 text-center text-[#7C709A]">Aucune facture pour ce dossier.</td></tr>
+                  <tr><td colSpan={7} className="p-6 text-center text-[#7C709A]">Aucune facture {suppliers ? 'fournisseur' : 'client'} pour ce dossier.</td></tr>
                 )}
                 {invoices.map(inv => {
                   const st = settlementState(inv);
-                  const late = inv.status === 'validated' && st !== 'paid' && inv.dueDate < today();
+                  const isCredit = inv.kind === 'credit_note';
+                  const late = !isCredit && inv.status === 'validated' && st !== 'paid' && inv.dueDate < today();
+                  const canCredit = inv.kind === 'sale' && inv.status === 'validated' && creditedOn(inv) < inv.totalTTC;
                   return (
                     <tr key={inv.id} className="hover:bg-[#F5F3FF]">
                       <td className="p-3 font-mono whitespace-nowrap">
-                        <div className="font-bold text-[#1E084A]">{inv.number}</div>
-                        <div className="text-[10.5px] text-[#7C709A]">{inv.date} • {inv.mode === 'cash' ? 'Comptant' : 'Crédit'}</div>
+                        <div className="font-bold text-[#1E084A]">{inv.number}{isCredit && <span className="ml-1 text-[#B45309]">AVOIR</span>}</div>
+                        <div className="text-[10.5px] text-[#7C709A]">
+                          {inv.date} • {isCredit ? `sur ${numberOf(inv.originalInvoiceId) ?? '?'}` : inv.mode === 'cash' ? 'Comptant' : 'Crédit'}
+                          {inv.externalRef && ` • réf. ${inv.externalRef}`}
+                        </div>
                       </td>
                       <td className="p-3">
                         <div className="font-semibold text-[#1E084A]">{inv.customerName}</div>
                         <div className="text-[10.5px] text-[#7C709A] font-mono">{inv.customerAccountCode}</div>
                       </td>
                       <td className={`p-3 font-mono whitespace-nowrap ${late ? 'text-[#DC2626] font-bold' : ''}`}>{inv.dueDate}</td>
-                      <td className="p-3 text-right font-bold whitespace-nowrap">{fmt(inv.totalTTC)}</td>
+                      <td className="p-3 text-right font-bold whitespace-nowrap">{isCredit ? '−' : ''}{fmt(inv.totalTTC)}</td>
                       <td className="p-3 text-right whitespace-nowrap">
-                        <div className="font-bold">{inv.status === 'validated' ? fmt(remainingAmount(inv)) : '—'}</div>
-                        {inv.status === 'validated' && <div className={`text-[10.5px] font-bold ${SETTLEMENT[st].cls}`}>{SETTLEMENT[st].label}</div>}
+                        <div className="font-bold">{inv.status === 'validated' && !isCredit ? fmt(remainingAmount(inv)) : '—'}</div>
+                        {inv.status === 'validated' && !isCredit && <div className={`text-[10.5px] font-bold ${SETTLEMENT[st].cls}`}>{SETTLEMENT[st].label}</div>}
                       </td>
                       <td className="p-3 text-center">
                         <span className={`px-2.5 py-0.5 border text-[11px] font-bold rounded-full ${STATUS[inv.status].cls}`}>{STATUS[inv.status].label}</span>
@@ -177,12 +236,27 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
                               <Check className="w-4 h-4" />
                             </button>
                           )}
-                          {inv.status === 'validated' && (
-                            <button className={`${btn} text-[#0EA5E9] hover:bg-[#E0F2FE]`} title="Règlements & lettrage" onClick={() => setLettering(inv)}>
+                          {inv.status === 'validated' && !isCredit && (
+                            <button className={`${btn} text-[#0EA5E9] hover:bg-[#E0F2FE]`} title={suppliers ? 'Paiements & lettrage' : 'Règlements & lettrage'} onClick={() => setLettering(inv)}>
                               <Wallet className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          {inv.status !== 'cancelled' && (
+                          {late && !suppliers && (
+                            <button className={`${btn} text-[#D97706] hover:bg-[#FEF3C7]`} title="Relancer le client (e-mail, WhatsApp ou texte copié)" onClick={() => remind(inv)}>
+                              <BellRing className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canCredit && (
+                            <button className={`${btn} text-[#7024E3] hover:bg-[#F5F3FF]`} title="Établir un avoir (remise, retour, erreur de facturation)" onClick={() => setEditing({ kind: 'credit_note', from: inv })}>
+                              <Undo2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {(inv.status === 'draft' || inv.status === 'pending_review') && (
+                            <button disabled={busy} className={`${btn} text-[#DC2626] hover:bg-[#FEE2E2]`} title="Supprimer le brouillon" onClick={() => remove(inv)}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {inv.status === 'validated' && (
                             <button disabled={busy} className={`${btn} text-[#DC2626] hover:bg-[#FEE2E2]`} title="Annuler la facture" onClick={() => cancel(inv)}>
                               <Ban className="w-3.5 h-3.5" />
                             </button>
@@ -204,14 +278,14 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-[#1E084A] text-white uppercase font-mono text-[11px]">
-                  <th className="p-3">Client</th>
+                  <th className="p-3">{tiers}</th>
                   {AGING_BUCKETS.map(b => <th key={b.key} className="p-3 text-right">{b.label}</th>)}
                   <th className="p-3 text-right">Total dû</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#EDE9FE]">
                 {aged.rows.length === 0 && (
-                  <tr><td colSpan={7} className="p-6 text-center text-[#7C709A]">Aucune créance impayée sur les factures validées.</td></tr>
+                  <tr><td colSpan={7} className="p-6 text-center text-[#7C709A]">{suppliers ? 'Aucune dette fournisseur' : 'Aucune créance impayée'} sur les factures validées.</td></tr>
                 )}
                 {[...aged.rows, ...(aged.rows.length ? [aged.totals] : [])].map(r => (
                   <tr key={r.customer} className={r === aged.totals ? 'bg-[#F5F3FF] font-bold' : 'hover:bg-[#F5F3FF]'}>
@@ -235,10 +309,13 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
 
       {editing && (
         <InvoiceEditor
-          invoice={editing === 'new' ? null : editing}
+          invoice={'id' in editing ? editing : null}
+          kind={'id' in editing ? editing.kind : editing.kind}
+          from={'id' in editing ? undefined : editing.from}
+          originalNumber={'id' in editing ? numberOf(editing.originalInvoiceId) : editing.from?.number}
           activeDossier={activeDossier}
           onClose={() => setEditing(null)}
-          onSaved={(inv) => { onInvoiceChanged(inv); setEditing(null); notify(`Facture ${inv.number} enregistrée.`); }}
+          onSaved={(inv) => { onInvoiceChanged(inv); setEditing(null); notify(`${KIND_LABEL[inv.kind]} ${inv.number} enregistrée.`); }}
           notify={notify}
         />
       )}
@@ -262,27 +339,42 @@ export const InvoicesPanel: React.FC<InvoicesPanelProps> = ({
 
 interface InvoiceEditorProps {
   invoice: Invoice | null;
+  kind: InvoiceKind;
+  /** Avoir : facture d'origine (lignes reprises). */
+  from?: Invoice;
+  originalNumber?: string;
   activeDossier: ClientDossier;
   onClose: () => void;
   onSaved: (invoice: Invoice) => void;
   notify: (message: string) => void;
 }
 
-const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, activeDossier, onClose, onSaved, notify }) => {
+const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, kind, from, originalNumber, activeDossier, onClose, onSaved, notify }) => {
+  const purchase = kind === 'purchase';
+  const creditNote = kind === 'credit_note';
   const accounts = accountsForDossier(activeDossier.id);
-  const customerAccounts = accounts.filter(a => a.code.startsWith('411'));
-  const salesAccounts = accounts.filter(a => a.code.startsWith('70'));
+  const customerAccounts = accounts.filter(a => a.code.startsWith(purchase ? '40' : '411'));
+  const salesAccounts = accounts.filter(a => purchase ? /^(6|2)/.test(a.code) && !/^28/.test(a.code) : a.code.startsWith('70'));
+  const title = creditNote ? `Avoir sur ${originalNumber ?? ''}` : purchase ? 'Facture fournisseur' : 'Facture';
   const [form, setForm] = useState<InvoiceInput>(() => invoice ? {
+    kind, externalRef: invoice.externalRef, originalInvoiceId: invoice.originalInvoiceId,
     date: invoice.date, dueDate: invoice.dueDate, mode: invoice.mode, paymentMethod: invoice.paymentMethod,
     customerName: invoice.customerName, customerPhone: invoice.customerPhone, customerEmail: invoice.customerEmail,
     customerAddress: invoice.customerAddress, customerTaxId: invoice.customerTaxId,
     customerAccountCode: invoice.customerAccountCode, salesAccountCode: invoice.salesAccountCode,
     vatRate: invoice.vatRate, paymentTerms: invoice.paymentTerms, notes: invoice.notes,
     lines: invoice.lines.map(l => ({ description: l.description, quantity: l.quantity, unitPrice: l.unitPrice })),
+  } : from ? {
+    kind, originalInvoiceId: from.id, date: today(), dueDate: today(), mode: 'credit',
+    customerName: from.customerName, customerPhone: from.customerPhone, customerEmail: from.customerEmail,
+    customerAddress: from.customerAddress, customerTaxId: from.customerTaxId,
+    customerAccountCode: from.customerAccountCode, salesAccountCode: from.salesAccountCode, vatRate: from.vatRate,
+    notes: `Avoir sur facture ${from.number}`,
+    lines: from.lines.map(l => ({ description: l.description, quantity: l.quantity, unitPrice: l.unitPrice })),
   } : {
-    date: today(), dueDate: addDays(today(), 30), mode: 'credit', paymentMethod: 'cash',
-    customerName: '', customerAccountCode: '4111', salesAccountCode: '7011', vatRate: 18,
-    paymentTerms: 'Paiement à 30 jours fin de mois', lines: [{ description: '', quantity: 1, unitPrice: 0 }],
+    kind, date: today(), dueDate: addDays(today(), 30), mode: 'credit', paymentMethod: 'cash',
+    customerName: '', customerAccountCode: purchase ? '4011' : '4111', salesAccountCode: purchase ? '6011' : '7011', vatRate: 18,
+    paymentTerms: purchase ? '' : 'Paiement à 30 jours fin de mois', lines: [{ description: '', quantity: 1, unitPrice: 0 }],
   });
   const [saving, setSaving] = useState(false);
   const set = <K extends keyof InvoiceInput>(k: K, v: InvoiceInput[K]) => setForm(f => ({ ...f, [k]: v }));
@@ -307,14 +399,18 @@ const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, activeDossier, o
       <div className="bg-white border border-[#DDD6FE] w-full max-w-3xl max-h-[92vh] overflow-y-auto rounded-2xl shadow-2xl">
         <div className="bg-[#1E084A] text-white px-6 py-4 flex items-center justify-between sticky top-0">
           <h3 className="font-heading text-base font-bold flex items-center gap-2">
-            <FileText className="w-5 h-5 text-[#A78BFA]" /> {invoice ? `Modifier la facture ${invoice.number}` : 'Nouvelle facture'}
+            <FileText className="w-5 h-5 text-[#A78BFA]" /> {invoice ? `Modifier : ${title} ${invoice.number}` : title}
           </h3>
           <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-lg"><X className="w-5 h-5" /></button>
         </div>
 
         <form onSubmit={e => { e.preventDefault(); save(true); }} className="p-6 space-y-5 text-xs">
           <fieldset className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <legend className="font-bold text-[#7024E3] mb-2 uppercase tracking-wider text-[11px]">Client</legend>
+            <legend className="font-bold text-[#7024E3] mb-2 uppercase tracking-wider text-[11px]">{purchase ? 'Fournisseur' : 'Client'}</legend>
+            {purchase && (
+              <label className="sm:col-span-2"><span className="font-bold block mb-1">N° de la facture du fournisseur</span>
+                <input className={inputCls} value={form.externalRef ?? ''} onChange={e => set('externalRef', e.target.value)} /></label>
+            )}
             <label className="sm:col-span-2"><span className="font-bold block mb-1">Nom / Raison sociale *</span>
               <input required className={inputCls} value={form.customerName} onChange={e => set('customerName', e.target.value)} /></label>
             <label><span className="font-bold block mb-1">Téléphone</span>
@@ -323,26 +419,28 @@ const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, activeDossier, o
               <input type="email" className={inputCls} value={form.customerEmail ?? ''} onChange={e => set('customerEmail', e.target.value)} /></label>
             <label><span className="font-bold block mb-1">Adresse</span>
               <input className={inputCls} value={form.customerAddress ?? ''} onChange={e => set('customerAddress', e.target.value)} /></label>
-            <label><span className="font-bold block mb-1">IFU / NCC du client</span>
+            <label><span className="font-bold block mb-1">IFU / NCC {purchase ? 'du fournisseur' : 'du client'}</span>
               <input className={inputCls} value={form.customerTaxId ?? ''} onChange={e => set('customerTaxId', e.target.value)} /></label>
-            <label className="sm:col-span-2"><span className="font-bold block mb-1">Compte client (411)</span>
+            <label className="sm:col-span-2"><span className="font-bold block mb-1">{purchase ? 'Compte fournisseur (401)' : 'Compte client (411)'}</span>
               <select className={`${inputCls} font-mono`} value={form.customerAccountCode} onChange={e => set('customerAccountCode', e.target.value)}>
                 {customerAccounts.map(a => <option key={a.code} value={a.code}>{a.code} - {a.label}</option>)}
               </select>
-              <span className="text-[10.5px] text-[#7C709A]">Créez un sous-compte client dédié dans « Plan comptable » (ex. 41111).</span>
+              <span className="text-[10.5px] text-[#7C709A]">Créez un sous-compte dédié dans « Plan comptable » (ex. {purchase ? '40111' : '41111'}).</span>
             </label>
           </fieldset>
 
           <fieldset className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <legend className="font-bold text-[#7024E3] mb-2 uppercase tracking-wider text-[11px]">Conditions</legend>
-            <label><span className="font-bold block mb-1">Type</span>
-              <select className={inputCls} value={form.mode} onChange={e => set('mode', e.target.value as InvoiceInput['mode'])}>
-                <option value="credit">À crédit</option>
-                <option value="cash">Au comptant</option>
-              </select></label>
+            {!creditNote && (
+              <label><span className="font-bold block mb-1">Type</span>
+                <select className={inputCls} value={form.mode} onChange={e => set('mode', e.target.value as InvoiceInput['mode'])}>
+                  <option value="credit">À crédit</option>
+                  <option value="cash">Au comptant</option>
+                </select></label>
+            )}
             <label><span className="font-bold block mb-1">Date</span>
               <input type="date" required className={inputCls} value={form.date} onChange={e => set('date', e.target.value)} /></label>
-            {form.mode === 'credit' ? (
+            {creditNote ? null : form.mode === 'credit' ? (
               <label><span className="font-bold block mb-1">Échéance</span>
                 <input type="date" required min={form.date} className={inputCls} value={form.dueDate ?? ''} onChange={e => set('dueDate', e.target.value)} /></label>
             ) : (
@@ -351,7 +449,7 @@ const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, activeDossier, o
                   {(Object.keys(PAYMENT_METHOD_LABEL) as PaymentMethod[]).map(m => <option key={m} value={m}>{PAYMENT_METHOD_LABEL[m]}</option>)}
                 </select></label>
             )}
-            <label><span className="font-bold block mb-1">Compte de vente</span>
+            <label><span className="font-bold block mb-1">{purchase ? "Compte d'achat / charge" : 'Compte de vente'}</span>
               <select className={`${inputCls} font-mono`} value={form.salesAccountCode} onChange={e => set('salesAccountCode', e.target.value)}>
                 {salesAccounts.map(a => <option key={a.code} value={a.code}>{a.code} - {a.label}</option>)}
               </select></label>
@@ -394,9 +492,11 @@ const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, activeDossier, o
           </div>
 
           <p className="text-[11px] text-[#7C709A]">
-            À l'émission : débit {form.customerAccountCode} {fmt(totals.totalTTC)},
-            crédit {form.salesAccountCode} {fmt(totals.totalHT)}{totals.totalTVA > 0 ? `, crédit 4431 ${fmt(totals.totalTVA)}` : ''}
-            {form.mode === 'cash' ? ' + encaissement immédiat lettré.' : '.'}
+            {purchase
+              ? <>À la validation : débit {form.salesAccountCode} {fmt(totals.totalHT)}{totals.totalTVA > 0 ? `, débit 4452 ${fmt(totals.totalTVA)}` : ''}, crédit {form.customerAccountCode} {fmt(totals.totalTTC)}{form.mode === 'cash' ? ' + paiement immédiat lettré.' : '.'}</>
+              : creditNote
+              ? <>À la validation : débit {form.salesAccountCode} {fmt(totals.totalHT)}{totals.totalTVA > 0 ? `, débit 4431 ${fmt(totals.totalTVA)}` : ''}, crédit {form.customerAccountCode} {fmt(totals.totalTTC)}, imputé sur {originalNumber}.</>
+              : <>À l'émission : débit {form.customerAccountCode} {fmt(totals.totalTTC)}, crédit {form.salesAccountCode} {fmt(totals.totalHT)}{totals.totalTVA > 0 ? `, crédit 4431 ${fmt(totals.totalTVA)}` : ''}{form.mode === 'cash' ? ' + encaissement immédiat lettré.' : '.'}</>}
           </p>
 
           <div className="flex justify-end gap-2.5">
@@ -436,10 +536,14 @@ const LetteringModal: React.FC<LetteringModalProps> = ({ invoice, invoices, entr
   // Montant déjà lettré de chaque écriture, toutes factures confondues
   const allocated = new Map<string, number>();
   for (const inv of invoices) for (const p of inv.payments) allocated.set(p.entryId, (allocated.get(p.entryId) ?? 0) + p.amount);
+  // Règlements : écritures validées au crédit d'un 411 (client) ou au débit d'un 40x (fournisseur), part non lettrée
+  const supplier = isSupplierSide(invoice.kind);
+  const settled = (e: JournalEntry) => settlementAmount(e, invoice.kind);
+  const forCustomer = (e: JournalEntry) => e.lines.some(l => (supplier ? l.debit : l.credit) > 0 && l.accountCode === invoice.customerAccountCode);
   const candidates = entries
-    .filter(e => e.creditAccountCode.startsWith('411') && e.amount - (allocated.get(e.id) ?? 0) > 0)
-    .map(e => ({ entry: e, free: e.amount - (allocated.get(e.id) ?? 0) }))
-    .sort((a, b) => Number(b.entry.creditAccountCode === invoice.customerAccountCode) - Number(a.entry.creditAccountCode === invoice.customerAccountCode));
+    .filter(e => e.status === 'validated' && settled(e) - (allocated.get(e.id) ?? 0) > 0)
+    .map(e => ({ entry: e, free: settled(e) - (allocated.get(e.id) ?? 0) }))
+    .sort((a, b) => Number(forCustomer(b.entry)) - Number(forCustomer(a.entry)));
 
   const act = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -502,7 +606,7 @@ const LetteringModal: React.FC<LetteringModalProps> = ({ invoice, invoices, entr
           {remaining > 0 && (
             <>
               <section className="border border-[#DDD6FE] rounded-xl p-4 space-y-3">
-                <h4 className="font-bold text-[#1E084A]">Enregistrer un nouveau règlement</h4>
+                <h4 className="font-bold text-[#1E084A]">{supplier ? 'Enregistrer un paiement' : 'Enregistrer un nouveau règlement'}</h4>
                 <div className="grid grid-cols-3 gap-2">
                   <input type="date" className={inputCls} value={date} onChange={e => setDate(e.target.value)} />
                   <input type="number" min="1" max={remaining} className={`${inputCls} font-mono`} value={amount} onChange={e => setAmount(Number(e.target.value))} />
@@ -512,18 +616,18 @@ const LetteringModal: React.FC<LetteringModalProps> = ({ invoice, invoices, entr
                 </div>
                 <button disabled={busy || amount <= 0 || amount > remaining} onClick={() => letter({ newPayment: { date, amount, paymentMethod: method } })}
                   className="px-4 py-2 bg-gradient-to-r from-[#10B981] to-[#059669] text-white font-bold rounded-xl disabled:opacity-40">
-                  Encaisser et lettrer {fmt(amount)}
+                  {supplier ? 'Payer' : 'Encaisser'} et lettrer {fmt(amount)}
                 </button>
-                <p className="text-[10.5px] text-[#7C709A]">Crée l'écriture « trésorerie / {invoice.customerAccountCode} », lettrée sur cette facture.</p>
+                <p className="text-[10.5px] text-[#7C709A]">Crée l'écriture « {supplier ? `${invoice.customerAccountCode} / trésorerie` : `trésorerie / ${invoice.customerAccountCode}`} », lettrée sur cette facture.</p>
               </section>
 
               <section>
-                <h4 className="font-bold text-[#1E084A] mb-2">Lettrer un règlement déjà saisi (crédit 411)</h4>
+                <h4 className="font-bold text-[#1E084A] mb-2">Lettrer un {supplier ? 'paiement déjà saisi (débit 401)' : 'règlement déjà saisi (crédit 411)'}</h4>
                 {candidates.length === 0 ? <p className="text-[#7C709A]">Aucun règlement disponible.</p> : (
                   <ul className="divide-y divide-[#EDE9FE] border border-[#EDE9FE] rounded-xl">
                     {candidates.map(({ entry, free }) => (
                       <li key={entry.id} className="flex items-center justify-between p-2.5 gap-2">
-                        <span>{entry.date} • {entry.pieceRef} • {entry.label} <span className="font-mono text-[#7C709A]">({entry.creditAccountCode})</span></span>
+                        <span>{entry.date} • {entry.pieceRef} • {entry.label} <span className="font-mono text-[#7C709A]">({(supplier ? debitCodes(entry) : creditCodes(entry)).join(', ')})</span></span>
                         <button disabled={busy} onClick={() => letter({ entryId: entry.id, amount: Math.min(free, remaining) })}
                           className="px-2.5 py-1 border border-[#7024E3] text-[#7024E3] font-bold rounded-lg whitespace-nowrap">
                           Lettrer {fmt(Math.min(free, remaining))}
@@ -561,7 +665,7 @@ export function printInvoice(inv: Invoice, d: ClientDossier) {
   </style></head><body>
     <div class="top">
       <div><h1>${esc(d.name)}</h1><div class="muted">${esc(d.activity)}<br>${esc(d.city)}, ${esc(d.country)} • Tél. ${esc(d.phone)}<br>RCCM : ${esc(d.rccm)} • IFU : ${esc(d.ifu)}<br>Régime : ${esc(d.regimeFiscal)}</div></div>
-      <div style="text-align:right"><h1>FACTURE</h1><div>N° <b>${esc(inv.number)}</b></div><div>Date : ${esc(frDate(inv.date))}</div>
+      <div style="text-align:right"><h1>${inv.kind === 'credit_note' ? 'AVOIR' : 'FACTURE'}</h1><div>N° <b>${esc(inv.number)}</b></div><div>Date : ${esc(frDate(inv.date))}</div>
         <div>Échéance : ${esc(frDate(inv.dueDate))}</div><div>${inv.mode === 'cash' ? 'Au comptant' : 'À crédit'}</div>
         ${inv.status !== 'validated' ? `<div class="stamp">${inv.status === 'cancelled' ? 'ANNULÉE' : 'PROFORMA — non validée'}</div>` : ''}</div>
     </div>

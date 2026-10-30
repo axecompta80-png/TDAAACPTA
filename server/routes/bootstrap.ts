@@ -10,9 +10,10 @@ import {
 } from '../mappers';
 import { dossierScopeWhere, entryScopeWhere, notificationScopeWhere } from '../access';
 import { getAuthUser } from '../auth';
+import { generateDueRecurring, serializeRecurring } from './recurring';
 
 /** Relations systématiquement chargées pour reconstituer une écriture complète côté client. */
-export const ENTRY_INCLUDE = { auditTrail: true, debitAccount: true, creditAccount: true } as const;
+export const ENTRY_INCLUDE = { auditTrail: true, lines: { include: { account: { select: { label: true } } } } } as const;
 /** Propriétaire chargé pour afficher son nom à côté du dossier. */
 export const DOSSIER_INCLUDE = { owner: { select: { name: true } } } as const;
 
@@ -23,7 +24,8 @@ export const DOSSIER_INCLUDE = { owner: { select: { name: true } } } as const;
  */
 export async function buildBootstrapPayload(req: Request) {
   const dossierScope = dossierScopeWhere(req) as any;
-  const [dossierRows, directoryRows, entryRows, notificationRows, settingsRows, accountRows, invoiceRows] = await Promise.all([
+  await generateDueRecurring(req);
+  const [dossierRows, directoryRows, entryRows, notificationRows, settingsRows, accountRows, invoiceRows, recurringRows] = await Promise.all([
     prisma.clientDossier.findMany({
       where: dossierScope,
       include: DOSSIER_INCLUDE,
@@ -51,6 +53,7 @@ export async function buildBootstrapPayload(req: Request) {
       include: { lines: true, payments: true },
       orderBy: { number: 'desc' },
     }),
+    prisma.recurringEntry.findMany({ where: { active: true, clientDossier: dossierScope }, orderBy: { nextDate: 'asc' } }),
   ]);
 
   return {
@@ -61,5 +64,6 @@ export async function buildBootstrapPayload(req: Request) {
     settingsByDossier: Object.fromEntries(settingsRows.map(r => [r.dossierId, serializePlatformSettings(r)])),
     accounts: accountRows.map(serializeAccount),
     invoices: invoiceRows.map(serializeInvoice),
+    recurring: recurringRows.map(serializeRecurring),
   };
 }

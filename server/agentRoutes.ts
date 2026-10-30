@@ -13,9 +13,10 @@ import { isGreeting, isQuestion, parseWithHeuristics } from './agent/heuristic';
 import type { AgentRequestContext, ParseOutcome } from './agent/types';
 import { getAuthUser } from './auth';
 import { dossierScopeWhere } from './access';
+import { accountsSummary } from '../src/utils/entryLines';
 
 const router = Router();
-const ENTRY_INCLUDE = { auditTrail: true, debitAccount: true, creditAccount: true } as const;
+import { ENTRY_INCLUDE } from './routes/bootstrap';
 const INPUT_MODES: InputMode[] = ['text', 'voice', 'photo', 'mobile_money', 'manual', 'excel_import'];
 const ALLOWED_DOCUMENT_TYPES = /^(image\/(jpeg|png|webp|heic|heif)|application\/pdf)$/;
 
@@ -60,7 +61,7 @@ async function loadContext(req: Request, dossierId: string): Promise<AgentReques
 
 function summarize(entries: JournalEntry[]): string {
   if (entries.length === 1) return entries[0].explanationSimplified;
-  const lines = entries.map(e => `• ${e.label} — ${formatFcfa(e.amount)} FCFA (débit ${e.debitAccountCode} / crédit ${e.creditAccountCode})`);
+  const lines = entries.map(e => `• ${e.label} — ${formatFcfa(e.amount)} FCFA (${accountsSummary(e)})`);
   return `J'ai enregistré ${entries.length} écritures :\n${lines.join('\n')}`;
 }
 

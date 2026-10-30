@@ -70,6 +70,32 @@ const eD = await call('A', '/entries', entryBody(D, 'D1'));
 t("A saisit dans le dossier : sans anomalie, validée d'office (aucun seuil)", eD.s === 201 && eD.j?.status === 'validated', eD.j);
 const eAno = await call('A', '/entries', { ...entryBody(D, 'D2'), detectedAnomaly: 'Doublon possible' });
 t('une anomalie reste à vérifier', eAno.s === 201 && eAno.j?.status !== 'validated', eAno.j);
+
+console.log('ÉCRITURES À PLUSIEURS LIGNES, JOURNAUX, PÉRIODES BLOQUÉES');
+const codes = (e: any) => e?.lines?.map((l: any) => `${l.accountCode}:${l.debit}/${l.credit}`).join(' ');
+t('ancien format converti : TVA sur le 4431, journal caisse', codes(eD.j) === '5711:11800/0 7011:0/10000 4431:0/1800' && eD.j?.journal === 'CA', eD.j);
+const achat = await call('A', '/entries', {
+  clientDossierId: D, date: '2026-10-24', label: 'Facture fournisseur', pieceRef: '', status: 'pending_review', inputType: 'manual', paymentMethod: 'bank_transfer',
+  lines: [{ accountCode: '6011', debit: 10000 }, { accountCode: '4452', debit: 1800 }, { accountCode: '4011', credit: 11800 }],
+});
+t('écriture à 3 lignes, journal achats, pièce numérotée', achat.s === 201 && achat.j?.journal === 'AC' && achat.j?.pieceRef === 'AC-00001' && achat.j?.amount === 11800, achat.j);
+const desequilibre = await call('A', '/entries', { ...entryBody(D, 'X'), lines: [{ accountCode: '6011', debit: 100 }, { accountCode: '4011', credit: 90 }] });
+t('écriture déséquilibrée refusée', desequilibre.s === 400 && /déséquilibrée/.test(desequilibre.j?.error), desequilibre.j);
+t("C ne bloque pas le dossier de A", (await call('C', `/dossiers/${D}/lock`, { until: '2026-10-31' })).s === 404);
+const lockKo = await call('A', `/dossiers/${D}/lock`, { until: '2026-10-31' });
+t('blocage refusé tant qu\'une écriture reste à valider', lockKo.s === 409, lockKo.j);
+await call('A', `/entries/${eAno.j?.id}/cancel`, {});
+const lockOk = await call('A', `/dossiers/${D}/lock`, { until: '2026-10-31' });
+t('octobre bloqué', lockOk.s === 200 && lockOk.j?.lockedUntil === '2026-10-31', lockOk.j);
+t('saisie refusée dans la période bloquée', (await call('A', '/entries', entryBody(D, 'L1'))).s === 409);
+t('dévalidation refusée dans la période bloquée', (await call('A', `/entries/${eD.j?.id}/unvalidate`, {})).s === 409);
+t('annulation refusée dans la période bloquée', (await call('A', `/entries/${achat.j?.id}/cancel`, {})).s === 409);
+t('contre-passation refusée si datée dans la période', (await call('A', `/entries/${achat.j?.id}/reverse`, { date: '2026-10-31' })).s === 409);
+const cp = await call('A', `/entries/${achat.j?.id}/reverse`, { date: '2026-11-02', reason: 'Erreur de fournisseur' });
+t('contre-passation : sens inversé, validée, rattachée', cp.s === 201 && codes(cp.j?.reversal) === '6011:0/10000 4452:0/1800 4011:11800/0'
+  && cp.j?.reversal?.status === 'validated' && cp.j?.reversal?.reversalOfId === achat.j?.id && cp.j?.reversal?.journal === 'AC' && cp.j?.reversal?.number === 2, cp.j);
+t('pas de seconde contre-passation', (await call('A', `/entries/${achat.j?.id}/reverse`, { date: '2026-11-02' })).s === 409);
+t('le compte principal débloque', (await call('A', `/dossiers/${D}/lock`, { until: null })).j?.lockedUntil === undefined);
 t("A ne supprime pas l'entreprise", (await call('A', `/dossiers/${M}/delete`, {})).s === 400);
 
 console.log('PARAMÈTRES');
@@ -86,15 +112,54 @@ t("C ne saisit pas dans le dossier de A", (await call('C', '/entries', entryBody
 t("C ne règle pas le dossier de A", (await call('C', '/settings/update', { ...base, dossierId: D })).s === 404);
 t("C ne supprime pas le dossier de A", (await call('C', `/dossiers/${D}/delete`, {})).s === 404);
 t("C n'utilise pas l'agent sur ce dossier", (await call('C', '/agent/chat', { dossierId: D, message: 'Combien ai-je vendu ?' })).s === 404);
+const ag = await call('A', '/agent/chat', { dossierId: D, message: "J'ai payé le salaire de Moussa 150000F par virement" });
+t("l'agent comprend une opération (salaire → 6611)", ag.s === 200 && JSON.stringify(ag.j).includes('6611'), ag.j);
+t("l'agent répond à une question", (await call('A', '/agent/chat', { dossierId: D, message: 'Combien j\'ai en caisse ?' })).s === 200);
 
 console.log('SAUVEGARDE JSON');
 const facture = await call('A', '/invoices', { clientDossierId: D, date: '2026-10-24', mode: 'credit', customerName: 'Client', vatRate: 18, lines: [{ description: 'Article', quantity: 2, unitPrice: 5000 }] });
-await call('A', `/invoices/${facture.j?.id}/validate`, {});
+const emise = await call('A', `/invoices/${facture.j?.id}/validate`, {});
+t('facture émise : une écriture VT à 3 lignes', emise.j?.entries?.length === 1 && emise.j.entries[0].journal === 'VT' && codes(emise.j.entries[0]) === '4111:11800/0 7011:0/10000 4431:0/1800', emise.j);
 const reglement = await call('A', `/invoices/${facture.j?.id}/payments`, { newPayment: { date: '2026-10-25', amount: 5000, paymentMethod: 'wave' } });
 t('facture validée et réglée en partie', reglement.s === 201 && reglement.j?.invoice?.payments?.length === 1, reglement.j);
+console.log('AVOIRS, FACTURES FOURNISSEURS, BROUILLONS');
+const avoir = await call('A', '/invoices', { clientDossierId: D, kind: 'credit_note', originalInvoiceId: facture.j?.id, date: '2026-10-26', customerName: 'Client', vatRate: 18, lines: [{ description: 'Remise', quantity: 1, unitPrice: 2000 }] });
+t('avoir créé (numéro AV-)', avoir.s === 201 && avoir.j?.number?.startsWith('AV-2026-') && avoir.j?.kind === 'credit_note', avoir.j);
+const avoirTrop = await call('A', '/invoices', { clientDossierId: D, kind: 'credit_note', originalInvoiceId: facture.j?.id, date: '2026-10-26', customerName: 'Client', vatRate: 18, lines: [{ description: 'Trop', quantity: 1, unitPrice: 9000 }] });
+t('avoir supérieur au restant refusé', avoirTrop.s === 400, avoirTrop.j);
+const avoirOk = await call('A', `/invoices/${avoir.j?.id}/validate`, {});
+t('avoir validé : écriture inverse et imputé sur la facture', codes(avoirOk.j?.entries?.[0]) === '7011:2000/0 4431:360/0 4111:0/2360'
+  && avoirOk.j?.related?.[0]?.payments?.some((p: any) => p.amount === 2360), avoirOk.j);
+t("facture d'origine non annulable tant que l'avoir existe", (await call('A', `/invoices/${facture.j?.id}/cancel`, {})).s === 409);
+const ff = await call('A', '/invoices', { clientDossierId: D, kind: 'purchase', externalRef: 'F-778', date: '2026-10-26', dueDate: '2026-11-26', mode: 'credit', customerName: 'Grossiste', customerAccountCode: '4011', salesAccountCode: '6011', vatRate: 18, lines: [{ description: 'Riz', quantity: 10, unitPrice: 1000 }] });
+t('facture fournisseur créée (FF-)', ff.s === 201 && ff.j?.number?.startsWith('FF-2026-') && ff.j?.externalRef === 'F-778', ff.j);
+const ffOk = await call('A', `/invoices/${ff.j?.id}/validate`, {});
+t('facture fournisseur : journal achats, TVA déductible', ffOk.j?.entries?.[0]?.journal === 'AC' && codes(ffOk.j.entries[0]) === '6011:10000/0 4452:1800/0 4011:0/11800', ffOk.j);
+const paie = await call('A', `/invoices/${ff.j?.id}/payments`, { newPayment: { date: '2026-10-27', amount: 11800, paymentMethod: 'bank_transfer' } });
+t('paiement fournisseur : débit 401 / crédit banque, soldée', paie.s === 201 && codes(paie.j?.entry) === '4011:11800/0 5211:0/11800' && paie.j?.invoice?.payments?.length === 1, paie.j);
+const b1 = await call('A', '/invoices', { clientDossierId: D, date: '2026-10-28', mode: 'credit', customerName: 'X', vatRate: 0, lines: [{ description: 'a', quantity: 1, unitPrice: 1 }] });
+const b2 = await call('A', '/invoices', { clientDossierId: D, date: '2026-10-28', mode: 'credit', customerName: 'Y', vatRate: 0, lines: [{ description: 'b', quantity: 1, unitPrice: 1 }] });
+t("brouillon qui n'est pas le dernier numéro : suppression refusée", (await call('A', `/invoices/${b1.j?.id}/delete`, {})).s === 409);
+t('dernier brouillon supprimé', (await call('A', `/invoices/${b2.j?.id}/delete`, {})).s === 204);
+t('facture validée : suppression refusée', (await call('A', `/invoices/${facture.j?.id}/delete`, {})).s === 409);
+
+console.log('ÉCRITURES RÉCURRENTES');
+const ago = new Date(); ago.setUTCMonth(ago.getUTCMonth() - 2, 1);
+const start = ago.toISOString().slice(0, 10);
+const rec = await call('A', '/recurring', { clientDossierId: D, label: 'Loyer boutique', startDate: start, paymentMethod: 'bank_transfer',
+  lines: [{ accountCode: '6221', debit: 150000 }, { accountCode: '5211', credit: 150000 }] });
+t('écriture récurrente créée', rec.s === 201 && rec.j?.day === 1, rec.j);
+const bootRec = (await call('A', '/bootstrap')).j;
+const loyers = bootRec.entries.filter((e: any) => e.clientDossierId === D && e.label === 'Loyer boutique');
+t('3 mois échus générés (rattrapage), validés, journal banque', loyers.length === 3 && loyers.every((e: any) => e.status === 'validated' && e.journal === 'BQ'), loyers.map((e: any) => e.date));
+t('prochaine échéance le mois suivant', bootRec.recurring.find((r: any) => r.id === rec.j?.id)?.nextDate > new Date().toISOString().slice(0, 10), bootRec.recurring);
+t('pas de doublon au rechargement', (await call('A', '/bootstrap')).j.entries.filter((e: any) => e.label === 'Loyer boutique').length === 3);
+t('arrêt', (await call('A', `/recurring/${rec.j?.id}/stop`, {})).j?.active === false);
+t("C n'arrête pas une récurrente de A", (await call('C', `/recurring/${rec.j?.id}/stop`, {})).s === 404);
+
 const snapshot = (boot: any) => JSON.stringify(boot.entries.filter((e: any) => e.clientDossierId === D)
-  .map(({ id, date, label, pieceRef, debitAccountCode, creditAccountCode, amount, tvaAmount, status, invoiceId, validatedAt, auditTrail }: any) =>
-    ({ id, date, label, pieceRef, debitAccountCode, creditAccountCode, amount, tvaAmount, status, invoiceId, validatedAt, audit: auditTrail.length }))
+  .map(({ id, date, label, pieceRef, journal, number, lines, amount, status, invoiceId, reversalOfId, validatedAt, auditTrail }: any) =>
+    ({ id, date, label, pieceRef, journal, number, lines, amount, status, invoiceId, reversalOfId, validatedAt, audit: auditTrail.length }))
   .sort((x: any, y: any) => x.id.localeCompare(y.id)));
 const before = (await call('A', '/bootstrap')).j;
 const sauvegarde = { dossiers: before.dossiers.filter((x: any) => x.id === D), entries: before.entries };
@@ -102,8 +167,8 @@ const restored = await call('A', '/import-backup', sauvegarde);
 t('restauration acceptée', restored.s === 200, restored.j);
 t('écritures restituées à l\'identique (montants, dates, statuts, liens facture, audit)', snapshot(restored.j) === snapshot(before), [snapshot(restored.j).slice(0, 200), snapshot(before).slice(0, 200)]);
 const factureApres = restored.j?.invoices?.find((i: any) => i.id === facture.j?.id);
-t('paiement de la facture conservé', factureApres?.payments?.length === 1 && factureApres.payments[0].amount === 5000, factureApres);
-const abimee = { ...sauvegarde, entries: [...sauvegarde.entries, { ...sauvegarde.entries.find((e: any) => e.clientDossierId === D), id: 'casse', amount: -3 }] };
+t('règlement et avoir lettrés conservés', factureApres?.payments?.length === 2 && factureApres.payments.some((p: any) => p.amount === 5000), factureApres);
+const abimee = { ...sauvegarde, entries: [...sauvegarde.entries, { ...sauvegarde.entries.find((e: any) => e.clientDossierId === D), id: 'casse', lines: [{ accountCode: '6011', debit: 5, credit: 0 }] }] };
 const refus = await call('A', '/import-backup', abimee);
 t('sauvegarde avec une écriture invalide : refusée avec le motif', refus.s === 400 && /refusée/.test(refus.j?.error), refus.j);
 t('… et rien n\'a été modifié', snapshot((await call('A', '/bootstrap')).j) === snapshot(before));

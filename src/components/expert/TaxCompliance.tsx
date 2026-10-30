@@ -1,16 +1,23 @@
 import React, { useState } from 'react';
-import { JournalEntry, ClientDossier } from '../../types';
-import { Printer, Download, ShieldCheck, QrCode } from 'lucide-react';
+import { JournalEntry, ClientDossier, JournalLine } from '../../types';
+import { Printer, Download, ShieldCheck, QrCode, Lock, FilePen } from 'lucide-react';
 import { computeFlows, computeTva, isoDate } from '../../utils/analytics';
+import { prefixBalance, isLocked, TVA_COLLECTED, TVA_DEDUCTIBLE } from '../../utils/entryLines';
 
 interface TaxComplianceProps {
   entries: JournalEntry[];
   activeDossier: ClientDossier;
+  /** Bloque les écritures jusqu'à la date (mois déclaré). */
+  onLock?: (until: string | null) => Promise<void>;
+  /** Ouvre le formulaire d'écriture pré-rempli. */
+  onNewEntry?: (prefill: Partial<JournalEntry>) => void;
 }
 
 export const TaxCompliance: React.FC<TaxComplianceProps> = ({
   entries,
-  activeDossier
+  activeDossier,
+  onLock,
+  onNewEntry
 }) => {
   const [taxType, setTaxType] = useState<'tva' | 'dsf'>('tva');
 
@@ -24,13 +31,31 @@ export const TaxCompliance: React.FC<TaxComplianceProps> = ({
   const creditTva = tva.credit;
   const notValidatedInMonth = dossierEntries.filter(e => e.status !== 'validated' && e.date.startsWith(month)).length;
   const monthLabel = new Date(`${month}-01T12:00:00`).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  const [y, m] = month.split('-').map(Number);
+  const monthEnd = isoDate(new Date(y, m, 0));
+  const declared = isLocked(monthEnd, activeDossier.lockedUntil);
+
+  /** Écriture de liquidation : solde les comptes de TVA du mois vers la TVA due (4441) ou le crédit à reporter (4449). */
+  const settleVat = () => {
+    const lines: JournalLine[] = [];
+    if (tvaCollectee) lines.push({ accountCode: TVA_COLLECTED, debit: tvaCollectee, credit: 0 });
+    if (tvaDeductible) lines.push({ accountCode: TVA_DEDUCTIBLE, debit: 0, credit: tvaDeductible });
+    if (netTvaToPay) lines.push({ accountCode: '4441', debit: 0, credit: netTvaToPay });
+    if (creditTva) lines.push({ accountCode: '4449', debit: creditTva, credit: 0 });
+    onNewEntry?.({ date: monthEnd, journal: 'OD', label: `Liquidation TVA ${monthLabel}`, lines });
+  };
+  const declareMonth = async () => {
+    if (onLock && window.confirm(`Marquer la TVA de ${monthLabel} comme déclarée ? Les écritures jusqu'au ${monthEnd.split('-').reverse().join('/')} seront bloquées (correction par contre-passation uniquement).`)) {
+      await onLock(monthEnd);
+    }
+  };
 
   // DSF : chiffres de l'année civile du mois sélectionné
   const year = month.slice(0, 4);
   const yearFlows = computeFlows(dossierEntries.filter(e => e.status === 'validated'), `${year}-01-01`, `${year}-12-31`);
   const yearPurchases = dossierEntries
-    .filter(e => e.status === 'validated' && e.date.startsWith(year) && /^(60|61|62|63)/.test(e.debitAccountCode))
-    .reduce((sum, e) => sum + (e.amount - (e.tvaAmount || 0)), 0);
+    .filter(e => e.status === 'validated' && e.date.startsWith(year))
+    .reduce((sum, e) => sum + prefixBalance(e, '60', '61', '62', '63'), 0);
   const grossAddedValue = Math.max(0, yearFlows.revenue - yearPurchases);
 
   const downloadDsfSummary = () => {
@@ -172,7 +197,7 @@ export const TaxCompliance: React.FC<TaxComplianceProps> = ({
                   <span className="font-tabular font-bold font-mono text-[#1E084A]">{tvaDeductible.toLocaleString('fr-FR')} FCFA</span>
                 </div>
                 <div className="flex justify-between items-center pt-2 border-t border-[#DDD6FE] font-bold">
-                  <span className="text-[#7024E3]">Total TVA déductible (Compte SYSCOHADA 4451)</span>
+                  <span className="text-[#7024E3]">Total TVA déductible (Compte SYSCOHADA 4452)</span>
                   <span className="font-tabular font-mono text-[#7024E3] font-black">{tvaDeductible.toLocaleString('fr-FR')} FCFA</span>
                 </div>
               </div>
@@ -197,6 +222,33 @@ export const TaxCompliance: React.FC<TaxComplianceProps> = ({
                 </span>
               </div>
             </div>
+          </div>
+
+          {/* Liquidation et déclaration du mois */}
+          <div className="p-4 bg-white border border-[#DDD6FE] rounded-xl text-xs flex flex-wrap items-center justify-between gap-3">
+            {declared ? (
+              <span className="flex items-center gap-1.5 font-bold text-[#B45309]"><Lock className="w-4 h-4" /> TVA de {monthLabel} déclarée : période bloquée.</span>
+            ) : (
+              <span className="text-[#534674]">
+                Après déclaration, passez l'écriture de liquidation puis bloquez le mois pour éviter toute modification.
+                {notValidatedInMonth > 0 && <b className="text-[#B45309]"> {notValidatedInMonth} écriture(s) du mois restent à valider.</b>}
+              </span>
+            )}
+            {!declared && (
+              <div className="flex flex-wrap gap-2">
+                {onNewEntry && (tvaCollectee > 0 || tvaDeductible > 0) && (
+                  <button onClick={settleVat} className="px-3 py-2 border border-[#7024E3] text-[#7024E3] font-bold rounded-xl flex items-center gap-1.5">
+                    <FilePen className="w-3.5 h-3.5" /> Écriture de liquidation
+                  </button>
+                )}
+                {onLock && (
+                  <button onClick={declareMonth} disabled={notValidatedInMonth > 0}
+                    className="px-3 py-2 bg-[#1E084A] text-white font-bold rounded-xl flex items-center gap-1.5 disabled:opacity-40">
+                    <Lock className="w-3.5 h-3.5" /> Marquer déclarée et bloquer
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* e-MECeF / e-Facture Compliance Notice */}

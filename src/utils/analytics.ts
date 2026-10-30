@@ -1,6 +1,6 @@
 import type { JournalEntry } from '../types';
 import { getAccountByCode } from '../data/syscohadaPlan';
-import { isTreasuryCode } from './paymentAccounts';
+import { prefixBalance, debitCodes, creditCodes } from './entryLines';
 
 /**
  * Indicateurs calculés uniquement à partir des écritures réelles d'un dossier.
@@ -36,7 +36,11 @@ export function periodBounds(period: Period, now = new Date()): { from: string; 
 }
 
 const inRange = (e: JournalEntry, from: string, to: string) => e.date >= from && e.date <= to;
-const net = (e: JournalEntry) => e.amount - (e.tvaAmount || 0);
+/** Produits nets (crédit - débit) et charges nettes (débit - crédit) d'une écriture sur des préfixes. */
+const income = (e: JournalEntry, ...p: string[]) => -prefixBalance(e, ...p);
+const charge = (e: JournalEntry, ...p: string[]) => prefixBalance(e, ...p);
+const INCOME = ['7', '82', '84', '86', '88'];
+const CHARGE = ['6', '81', '83', '85', '87'];
 
 // ---------- Soldes & trésorerie ----------
 
@@ -44,8 +48,7 @@ const net = (e: JournalEntry) => e.amount - (e.tvaAmount || 0);
 export function computeBalances(entries: JournalEntry[]): Record<string, number> {
   const balances: Record<string, number> = {};
   for (const e of entries) {
-    balances[e.debitAccountCode] = (balances[e.debitAccountCode] ?? 0) + e.amount;
-    balances[e.creditAccountCode] = (balances[e.creditAccountCode] ?? 0) - e.amount;
+    for (const l of e.lines) balances[l.accountCode] = (balances[l.accountCode] ?? 0) + l.debit - l.credit;
   }
   return balances;
 }
@@ -107,17 +110,18 @@ export function computeFlows(entries: JournalEntry[], from: string, to: string):
   for (const e of entries) {
     if (!inRange(e, from, to)) continue;
     count++;
-    const dT = isTreasuryCode(e.debitAccountCode);
-    const cT = isTreasuryCode(e.creditAccountCode);
-    if (dT && !cT) cashIn += e.amount;
-    if (cT && !dT) cashOut += e.amount;
-    if (e.creditAccountCode.startsWith('7') || e.creditAccountCode.startsWith('82') || e.creditAccountCode.startsWith('85')) {
-      revenue += net(e);
-      rev[e.creditAccountCode] = (rev[e.creditAccountCode] ?? 0) + net(e);
-    }
-    if (e.debitAccountCode.startsWith('6')) {
-      expenses += net(e);
-      exp[e.debitAccountCode] = (exp[e.debitAccountCode] ?? 0) + net(e);
+    // Mouvement net de trésorerie (un virement interne s'annule).
+    const t = prefixBalance(e, '5');
+    if (t > 0) cashIn += t;
+    if (t < 0) cashOut -= t;
+    for (const l of e.lines) {
+      if (INCOME.some(p => l.accountCode.startsWith(p))) {
+        revenue += l.credit - l.debit;
+        rev[l.accountCode] = (rev[l.accountCode] ?? 0) + l.credit - l.debit;
+      } else if (CHARGE.some(p => l.accountCode.startsWith(p))) {
+        expenses += l.debit - l.credit;
+        exp[l.accountCode] = (exp[l.accountCode] ?? 0) + l.debit - l.credit;
+      }
     }
   }
 
@@ -139,10 +143,10 @@ export function computeReceivables(entries: JournalEntry[]) {
   const b = computeBalances(entries);
   const total = Math.max(0, sumPrefix(b, '411'));
   const open = entries
-    .filter(e => e.debitAccountCode.startsWith('411'))
+    .filter(e => prefixBalance(e, '411') > 0)
     .sort((a, c) => (a.date < c.date ? 1 : -1))
     .slice(0, 5)
-    .map(e => ({ date: e.date, label: e.label, amount: e.amount }));
+    .map(e => ({ date: e.date, label: e.label, amount: prefixBalance(e, '411') }));
   return { total, open };
 }
 
@@ -150,10 +154,10 @@ export function computePayables(entries: JournalEntry[]) {
   const b = computeBalances(entries);
   const total = Math.max(0, -sumPrefix(b, '401'));
   const open = entries
-    .filter(e => e.creditAccountCode.startsWith('401'))
+    .filter(e => prefixBalance(e, '401') < 0)
     .sort((a, c) => (a.date < c.date ? 1 : -1))
     .slice(0, 5)
-    .map(e => ({ date: e.date, label: e.label, amount: e.amount }));
+    .map(e => ({ date: e.date, label: e.label, amount: -prefixBalance(e, '401') }));
   return { total, open };
 }
 
@@ -170,23 +174,18 @@ export interface TvaSummary {
   entriesCount: number;
 }
 
-/** TVA du mois `YYYY-MM` sur les écritures validées, avec les montants de TVA réellement enregistrés. */
+/** TVA du mois `YYYY-MM` (ou de l'année `YYYY`) : soldes des comptes 443 (collectée) et 445 (déductible) des écritures validées. */
 export function computeTva(entries: JournalEntry[], month: string): TvaSummary {
   let totalSalesHT = 0, totalPurchasesHT = 0, tvaCollectee = 0, tvaDeductible = 0, entriesCount = 0;
   for (const e of entries) {
     if (e.status !== 'validated' || !e.date.startsWith(month)) continue;
-    // Écritures de TVA dédiées (factures générées) : 411 / 4431 et 4452 / 401
-    if (e.creditAccountCode.startsWith('443')) { tvaCollectee += e.amount; continue; }
-    if (e.debitAccountCode.startsWith('445')) { tvaDeductible += e.amount; continue; }
-    if (e.creditAccountCode.startsWith('7')) {
-      totalSalesHT += net(e);
-      tvaCollectee += e.tvaAmount || 0;
-      entriesCount++;
-    } else if (/^(6|2[1-4]|3)/.test(e.debitAccountCode) && !e.debitAccountCode.startsWith('64') && !e.debitAccountCode.startsWith('68')) {
-      totalPurchasesHT += net(e);
-      tvaDeductible += e.tvaAmount || 0;
-      entriesCount++;
-    }
+    const sales = income(e, '70');
+    const purchases = charge(e, '60', '61', '62', '63', '21', '22', '23', '24');
+    totalSalesHT += sales;
+    totalPurchasesHT += purchases;
+    tvaCollectee += income(e, '443');
+    tvaDeductible += charge(e, '445');
+    if (sales || purchases) entriesCount++;
   }
   return {
     period: month,
@@ -263,11 +262,11 @@ export function computeCreditAssessment(entries: JournalEntry[], now = new Date(
   const netMarginPct = flows.revenue > 0 ? Math.round(((flows.revenue - flows.expenses) / flows.revenue) * 100) : 0;
 
   // Traçabilité : parmi les encaissements réels de ventes, part passée par Mobile Money / banque
-  const salesEntries = windowed.filter(e => e.creditAccountCode.startsWith('7') && isTreasuryCode(e.debitAccountCode));
+  const salesEntries = windowed.filter(e => income(e, '7') > 0 && prefixBalance(e, '5') > 0);
   const traced = salesEntries.filter(e => e.paymentMethod !== 'cash').length;
   const traceabilityRate = salesEntries.length ? Math.round((traced / salesEntries.length) * 100) : 0;
 
-  const monthsWithRevenue = new Set(windowed.filter(e => e.creditAccountCode.startsWith('7')).map(e => e.date.slice(0, 7))).size;
+  const monthsWithRevenue = new Set(windowed.filter(e => income(e, '7') > 0).map(e => e.date.slice(0, 7))).size;
   const regularityRate = Math.round((monthsWithRevenue / monthsObserved) * 100);
 
   const anomalyRate = windowed.length ? windowed.filter(e => e.status === 'anomaly').length / windowed.length : 0;
@@ -335,7 +334,7 @@ export function buildAgentContext(entries: JournalEntry[], now = new Date()) {
     recentEntries: [...entries]
       .sort((a, b) => (a.date < b.date ? 1 : -1))
       .slice(0, 8)
-      .map(e => ({ date: e.date, label: e.label, amount: e.amount, debit: e.debitAccountCode, credit: e.creditAccountCode, method: e.paymentMethod, status: e.status })),
+      .map(e => ({ date: e.date, label: e.label, amount: e.amount, debit: debitCodes(e).join(','), credit: creditCodes(e).join(','), method: e.paymentMethod, status: e.status })),
   };
 }
 
@@ -344,6 +343,8 @@ export type AgentContext = ReturnType<typeof buildAgentContext>;
 // ---------- États financiers (Bilan & Compte de résultat) ----------
 export interface FinancialReport {
   hasData: boolean;
+  /** Exercice présenté (année civile), ou null : toutes les écritures. */
+  year: string | null;
   // Compte de résultat (produits / charges HT)
   revenue: number;
   otherIncome: number;
@@ -372,44 +373,46 @@ export interface FinancialReport {
   treasury: number;
   totalActif: number;
   capital: number;
+  /** Résultats des exercices antérieurs (report à nouveau calculé). */
+  reportANouveau: number;
+  /** Dettes financières et circulantes (hors découverts). */
   dettes: number;
+  /** Trésorerie passif : découverts et soldes créditeurs de trésorerie. */
+  overdrafts: number;
   resultatBilan: number;
   totalPassif: number;
   /** Écart actif - passif (0 si équilibré) ; un écart signale un jeu d'écritures incomplet. */
   imbalance: number;
 }
 
+/** Résultat (produits - charges, classes 6 à 8) d'un ensemble d'écritures. */
+const resultOf = (entries: JournalEntry[]) =>
+  entries.reduce((s, e) => s + income(e, ...INCOME) - charge(e, ...CHARGE) - charge(e, '89'), 0);
+
 /**
- * Construit le Bilan et le Compte de résultat SYSCOHADA à partir des SEULES écritures
- * validées du dossier. Aucune valeur de démonstration ou d'ajustement n'est injectée :
- * un dossier sans écriture produit un rapport entièrement à zéro (hasData = false).
+ * Bilan et Compte de résultat SYSCOHADA à partir des SEULES écritures validées.
+ * Exercice = année civile `year` : le compte de résultat porte sur l'année, le bilan sur tout
+ * l'historique jusqu'au 31/12 ; les résultats des années précédentes forment le report à nouveau.
+ * Aucune valeur de démonstration : un dossier sans écriture produit un rapport à zéro.
  */
-export function computeFinancialReport(entries: JournalEntry[]): FinancialReport {
-  const validated = entries.filter(e => e.status === 'validated');
+export function computeFinancialReport(entries: JournalEntry[], year: string | null = null): FinancialReport {
+  const validated = entries.filter(e => e.status === 'validated' && (!year || e.date <= `${year}-12-31`));
+  const current = year ? validated.filter(e => e.date >= `${year}-01-01`) : validated;
+  const previous = year ? validated.filter(e => e.date < `${year}-01-01`) : [];
   const balances = computeBalances(validated);
-  const treasury = computeTreasury(validated).total;
 
-  // Produits (crédit) et charges (débit), montants hors taxes.
-  const incomeOnCredit = (prefixes: string[]) => {
-    let total = 0;
-    for (const e of validated) if (prefixes.some(p => e.creditAccountCode.startsWith(p))) total += net(e);
-    return total;
-  };
-  const expenseOnDebit = (prefixes: string[]) => {
-    let total = 0;
-    for (const e of validated) if (prefixes.some(p => e.debitAccountCode.startsWith(p))) total += net(e);
-    return total;
-  };
+  const incomeOf = (prefixes: string[]) => current.reduce((s, e) => s + income(e, ...prefixes), 0);
+  const expenseOf = (prefixes: string[]) => current.reduce((s, e) => s + charge(e, ...prefixes), 0);
 
-  const revenue = incomeOnCredit(['70']);
-  const otherIncome = incomeOnCredit(['71', '72', '73', '74', '75']);
-  const purchases = expenseOnDebit(['60', '61']);
-  const services = expenseOnDebit(['62', '63']);
-  const personnel = expenseOnDebit(['66']);
-  const taxes = expenseOnDebit(['64']);
-  const depreciation = expenseOnDebit(['68']);
-  const financialResult = incomeOnCredit(['77']) - expenseOnDebit(['67']);
-  const haoResult = incomeOnCredit(['82', '84', '86', '88']) - expenseOnDebit(['81', '83', '85', '87']);
+  const revenue = incomeOf(['70']);
+  const otherIncome = incomeOf(['71', '72', '73', '74', '75']);
+  const purchases = expenseOf(['60', '61']);
+  const services = expenseOf(['62', '63']);
+  const personnel = expenseOf(['66']);
+  const taxes = expenseOf(['64']);
+  const depreciation = expenseOf(['68', '69']);
+  const financialResult = incomeOf(['76', '77', '78', '79']) - expenseOf(['65', '67']);
+  const haoResult = incomeOf(['82', '84', '86', '88']) - expenseOf(['81', '83', '85', '87']);
 
   const grossMargin = revenue - purchases;
   const addedValue = grossMargin - services;
@@ -417,7 +420,7 @@ export function computeFinancialReport(entries: JournalEntry[]): FinancialReport
   const operatingResult = ebe - depreciation;
   const resultBeforeTax = operatingResult + financialResult + haoResult;
 
-  const taxEntries = expenseOnDebit(['89']);
+  const taxEntries = expenseOf(['89']);
   const corporateTaxEstimated = taxEntries === 0 && resultBeforeTax > 0;
   const corporateTax = taxEntries > 0 ? taxEntries : corporateTaxEstimated ? Math.round(resultBeforeTax * 0.25) : 0;
   const netProfit = resultBeforeTax - corporateTax;
@@ -431,29 +434,33 @@ export function computeFinancialReport(entries: JournalEntry[]): FinancialReport
     return total;
   };
 
-  const immobilisationsBrutes = sumBalances((c, b) => c.startsWith('2') && !c.startsWith('28') && b > 0);
-  const amortissements = -sumBalances(c => c.startsWith('28'));
+  const immobilisationsBrutes = sumBalances((c, b) => c.startsWith('2') && !c.startsWith('28') && !c.startsWith('29') && b > 0);
+  const amortissements = 0 - sumBalances(c => c.startsWith('28') || c.startsWith('29'));
   const immobilisationsNettes = immobilisationsBrutes - Math.max(0, amortissements);
   const stocks = sumBalances((c, b) => c.startsWith('3') && b > 0);
   const creances = sumBalances((c, b) => c.startsWith('4') && b > 0);
-  const totalActif = immobilisationsNettes + stocks + creances + treasury;
+  // Trésorerie : soldes débiteurs à l'actif, découverts (soldes créditeurs) au passif.
+  const treasuryActif = sumBalances((c, b) => c.startsWith('5') && b > 0);
+  const overdrafts = 0 - sumBalances((c, b) => c.startsWith('5') && b < 0);
+  const totalActif = immobilisationsNettes + stocks + creances + treasuryActif;
 
-  const capital = -sumBalances(c => /^1[0-3]/.test(c));
+  const capital = 0 - sumBalances(c => c.startsWith('1') && !/^1[6-9]/.test(c));
+  const emprunts = 0 - sumBalances(c => /^1[6-9]/.test(c));
+  const reportANouveau = resultOf(previous);
   // L'impôt estimé (non encore comptabilisé) est une dette fiscale : sans lui, le bilan ne s'équilibre pas.
-  const dettes = -sumBalances((c, b) => c.startsWith('4') && b < 0) + (corporateTaxEstimated ? corporateTax : 0);
+  const dettes = emprunts - sumBalances((c, b) => c.startsWith('4') && b < 0) + (corporateTaxEstimated ? corporateTax : 0);
   const resultatBilan = netProfit;
-  const totalPassif = capital + dettes + resultatBilan;
-
-  const hasData = validated.length > 0;
+  const totalPassif = capital + reportANouveau + dettes + overdrafts + resultatBilan;
 
   return {
-    hasData,
+    hasData: current.length > 0,
+    year,
     revenue, otherIncome, purchases, services, personnel, taxes, depreciation,
     financialResult, haoResult, resultBeforeTax, corporateTax, corporateTaxEstimated,
     netProfit, grossMargin, addedValue, ebe, operatingResult,
     immobilisationsBrutes, amortissements: Math.max(0, amortissements), immobilisationsNettes,
-    stocks, creances, treasury, totalActif,
-    capital, dettes, resultatBilan, totalPassif,
-    imbalance: totalActif - totalPassif,
+    stocks, creances, treasury: treasuryActif, totalActif,
+    capital, reportANouveau, dettes, overdrafts, resultatBilan, totalPassif,
+    imbalance: Math.round((totalActif - totalPassif) * 100) / 100,
   };
 }

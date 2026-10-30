@@ -43,6 +43,13 @@ enum InvoiceStatus {
   cancelled
 }
 
+// Facture client, avoir client (annule tout ou partie d'une facture client), facture fournisseur.
+enum InvoiceKind {
+  sale
+  credit_note
+  purchase
+}
+
 enum InvoiceMode {
   cash
   credit
@@ -76,6 +83,17 @@ enum AuditAction {
   submitted_for_review
   unvalidated
   cancelled
+  reversed
+}
+
+// Journaux : ventes, achats, banque & Mobile Money, caisse, opérations diverses, à-nouveaux.
+enum JournalCode {
+  VT
+  AC
+  BQ
+  CA
+  OD
+  AN
 }
 
 enum NotificationType {
@@ -137,6 +155,8 @@ model ClientDossier {
   ifu                 String
   regimeFiscal        RegimeFiscal
   currency            String
+  // Écritures datées jusqu'à ce jour inclus : bloquées (période déclarée ou exercice clôturé).
+  lockedUntil         DateTime?    @db.Date
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
 
@@ -144,6 +164,7 @@ model ClientDossier {
   notifications  AppNotification[]
   accounts       SyscohadaAccount[]
   invoices       Invoice[]
+  recurring      RecurringEntry[]
   settings       PlatformSettings?
 
   @@index([organizationId])
@@ -173,8 +194,7 @@ model SyscohadaAccount {
   dossierId   String?
   dossier     ClientDossier?  @relation(fields: [dossierId], references: [id], onDelete: Cascade)
 
-  debitEntries  JournalEntry[] @relation("DebitAccount")
-  creditEntries JournalEntry[] @relation("CreditAccount")
+  lines JournalLine[]
 
   @@index([dossierId])
   @@map("syscohada_accounts")
@@ -185,12 +205,11 @@ model JournalEntry {
   date                  DateTime          @db.Date
   label                 String
   pieceRef              String
-  debitAccountCode      String
-  debitAccount          SyscohadaAccount  @relation("DebitAccount", fields: [debitAccountCode], references: [code])
-  creditAccountCode     String
-  creditAccount         SyscohadaAccount  @relation("CreditAccount", fields: [creditAccountCode], references: [code])
+  journal               JournalCode       @default(OD)
+  // Numéro d'ordre dans le journal du dossier.
+  number                Int
+  // Total débit (= total crédit) des lignes.
   amount                Decimal           @db.Decimal(14, 2)
-  tvaAmount             Decimal           @db.Decimal(14, 2)
   clientDossierId       String
   clientDossier         ClientDossier     @relation(fields: [clientDossierId], references: [id], onDelete: Cascade)
   status                TransactionStatus @default(pending_review)
@@ -207,12 +226,56 @@ model JournalEntry {
   validatedAt           DateTime?
   invoiceId             String?
   invoice               Invoice?          @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  // Écriture contre-passée par celle-ci.
+  reversalOfId          String?
+  reversalOf            JournalEntry?     @relation("Reversal", fields: [reversalOfId], references: [id], onDelete: SetNull)
+  reversals             JournalEntry[]    @relation("Reversal")
 
+  lines      JournalLine[]
   auditTrail AuditLog[]
   payments   InvoicePayment[]
 
+  @@unique([clientDossierId, journal, number])
   @@index([clientDossierId])
   @@map("journal_entries")
+}
+
+// Écriture répétée chaque mois (loyer, abonnement) : générée à l'ouverture de l'application quand nextDate est échue.
+model RecurringEntry {
+  id              String        @id @default(uuid())
+  clientDossierId String
+  clientDossier   ClientDossier @relation(fields: [clientDossierId], references: [id], onDelete: Cascade)
+  label           String
+  journal         JournalCode
+  // Lignes au format JournalLine (compte, débit, crédit, libellé).
+  lines           Json
+  paymentMethod   PaymentMethod
+  // Jour du mois voulu (29 à 31 ramené au dernier jour des mois courts).
+  day             Int
+  nextDate        DateTime      @db.Date
+  active          Boolean       @default(true)
+  createdById     String?
+  createdAt       DateTime      @default(now())
+
+  @@index([clientDossierId])
+  @@map("recurring_entries")
+}
+
+// Ligne d'écriture : un compte, au débit OU au crédit. Total débit = total crédit par écriture.
+model JournalLine {
+  id          String           @id @default(uuid())
+  entryId     String
+  entry       JournalEntry     @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  position    Int
+  accountCode String
+  account     SyscohadaAccount @relation(fields: [accountCode], references: [code])
+  label       String?
+  debit       Decimal          @default(0) @db.Decimal(14, 2)
+  credit      Decimal          @default(0) @db.Decimal(14, 2)
+
+  @@index([entryId])
+  @@index([accountCode])
+  @@map("journal_lines")
 }
 
 model AuditLog {
@@ -300,7 +363,15 @@ model Invoice {
   id                  String         @id @default(uuid())
   clientDossierId     String
   clientDossier       ClientDossier  @relation(fields: [clientDossierId], references: [id], onDelete: Cascade)
+  kind                InvoiceKind    @default(sale)
   number              String
+  // Numéro porté par la facture du fournisseur.
+  externalRef         String?
+  // Avoir : facture client d'origine. Les champs « customer » désignent le tiers (client ou fournisseur),
+  // customerAccountCode son compte (411 ou 401), salesAccountCode le compte de nature (70x, ou 6x / 2x en achat).
+  originalInvoiceId   String?
+  originalInvoice     Invoice?       @relation("CreditNote", fields: [originalInvoiceId], references: [id], onDelete: SetNull)
+  creditNotes         Invoice[]      @relation("CreditNote")
   date                DateTime       @db.Date
   dueDate             DateTime       @db.Date
   mode                InvoiceMode

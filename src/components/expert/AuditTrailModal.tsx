@@ -43,9 +43,19 @@ export const AuditTrailModal: React.FC<AuditTrailModalProps> = ({
               </span>
             </div>
             <div className="flex items-center justify-between text-[12px] font-mono text-[#534674] pt-1.5 border-t border-[#DDD6FE]">
-              <span>Débit : {entry.debitAccount}</span>
-              <span>Crédit : {entry.creditAccount}</span>
+              <span>{entry.journal} n° {entry.number} • Pièce {entry.pieceRef}</span>
             </div>
+            <table className="w-full text-[12px] font-mono text-[#534674]">
+              <tbody>
+                {entry.lines.map((l, i) => (
+                  <tr key={i}>
+                    <td className="pr-2">{l.accountCode} {l.accountLabel ?? ''}</td>
+                    <td className="text-right">{l.debit ? l.debit.toLocaleString('fr-FR') : ''}</td>
+                    <td className="text-right">{l.credit ? l.credit.toLocaleString('fr-FR') : ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
             {entry.rawInput && (
               <p className="text-[11px] text-[#7C709A] italic">
                 Source originale : "{entry.rawInput}" ({entry.inputType})

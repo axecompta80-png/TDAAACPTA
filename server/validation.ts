@@ -1,3 +1,6 @@
+import { simpleLines, linesError, defaultJournal, JOURNALS, totalDebit } from '../src/utils/entryLines';
+import type { JournalCode, JournalLine } from '../src/types';
+
 /**
  * Validation stricte des entrées API (whitelist de champs + types + bornes).
  *
@@ -12,7 +15,8 @@ export const TRANSACTION_STATUSES = ['draft', 'pending_review', 'anomaly', 'vali
 export const ENTRY_STATUSES = ['draft', 'pending_review', 'anomaly'] as const;
 export const INPUT_MODES = ['text', 'voice', 'photo', 'mobile_money', 'manual', 'excel_import'] as const;
 export const PAYMENT_METHODS = ['cash', 'orange_money', 'mtn_momo', 'wave', 'moov_money', 'bank_transfer', 'cheque'] as const;
-export const AUDIT_ACTIONS = ['created_by_ai', 'validated_by_expert', 'auto_validated', 'edited_by_expert', 'anomaly_flagged', 'submitted_for_review', 'unvalidated', 'cancelled'] as const;
+export const AUDIT_ACTIONS = ['created_by_ai', 'validated_by_expert', 'auto_validated', 'edited_by_expert', 'anomaly_flagged', 'submitted_for_review', 'unvalidated', 'cancelled', 'reversed'] as const;
+export const JOURNAL_CODES = JOURNALS.map(j => j.code);
 /** Actions que le client peut journaliser lui-même (les autres sont écrites par le serveur). */
 const CLIENT_AUDIT_ACTIONS = ['created_by_ai', 'edited_by_expert', 'anomaly_flagged'] as const;
 
@@ -109,11 +113,11 @@ export interface EntryInput {
   id?: string;
   date: string;
   label: string;
+  /** Vide : numéro de pièce attribué par le serveur (VT-000012). */
   pieceRef: string;
-  debitAccountCode: string;
-  creditAccountCode: string;
+  journal: JournalCode;
+  lines: JournalLine[];
   amount: number;
-  tvaAmount: number;
   status: string;
   detectedAnomaly?: string;
   rawInput: string;
@@ -146,6 +150,34 @@ function parseAuditTrail(value: unknown, trusted = false): AuditLogInput[] {
 }
 
 /**
+ * Lignes d'écriture. Ancien format accepté (sauvegardes antérieures) :
+ * debitAccountCode / creditAccountCode / amount / tvaAmount, converti en lignes.
+ */
+function parseLines(b: Record<string, unknown>): JournalLine[] | string {
+  if (!Array.isArray(b.lines)) {
+    const debit = text(b.debitAccountCode, 20);
+    const credit = text(b.creditAccountCode, 20);
+    const amount = money(b.amount);
+    const tva = money(b.tvaAmount ?? 0) ?? 0;
+    if (!debit || !credit || !amount) return 'Lignes d\'écriture manquantes.';
+    return simpleLines(debit, credit, amount, tva);
+  }
+  if (b.lines.length > 200) return 'Écriture limitée à 200 lignes.';
+  const lines: JournalLine[] = [];
+  for (const [i, raw] of b.lines.entries()) {
+    const l = (raw ?? {}) as Record<string, unknown>;
+    const accountCode = text(l.accountCode, 20);
+    const debit = money(l.debit ?? 0);
+    const credit = money(l.credit ?? 0);
+    if (!accountCode) return `Ligne ${i + 1} : compte invalide.`;
+    if (debit === null || credit === null) return `Ligne ${i + 1} : montant invalide.`;
+    if (debit === 0 && credit === 0) continue; // ligne vide du formulaire
+    lines.push({ accountCode, debit, credit, label: optionalText(l.label, 300) ?? undefined });
+  }
+  return linesError(lines) ?? lines;
+}
+
+/**
  * `trusted` (restauration de sauvegarde par un profil habilité à valider) : statut et piste
  * d'audit d'origine conservés. Sinon, une écriture arrive au mieux "en attente".
  */
@@ -153,11 +185,8 @@ export function validateEntryInput(body: unknown, options: { requireId?: boolean
   const b = (body ?? {}) as Record<string, unknown>;
   const date = isoDate(b.date);
   const label = text(b.label, 300);
-  const pieceRef = text(b.pieceRef, 80);
-  const debitAccountCode = text(b.debitAccountCode, 20);
-  const creditAccountCode = text(b.creditAccountCode, 20);
-  const amount = money(b.amount);
-  const tvaAmount = money(b.tvaAmount ?? 0);
+  const pieceRef = optionalText(b.pieceRef, 80) ?? '';
+  const lines = parseLines(b);
   // Toute écriture saisie arrive au mieux "en attente" : un statut "validé" envoyé par le client est ignoré.
   const status = oneOf(b.status, options.trusted ? TRANSACTION_STATUSES : ENTRY_STATUSES) ?? 'pending_review';
   const inputType = oneOf(b.inputType, INPUT_MODES);
@@ -170,20 +199,15 @@ export function validateEntryInput(body: unknown, options: { requireId?: boolean
   if (options.requireId && !id) return { ok: false, error: 'Identifiant d\'écriture invalide.' };
   if (!date) return { ok: false, error: 'Date d\'écriture invalide.' };
   if (!label) return { ok: false, error: 'Le libellé de l\'écriture est requis.' };
-  if (!pieceRef) return { ok: false, error: 'La référence de pièce est requise.' };
-  if (!debitAccountCode) return { ok: false, error: 'Compte au débit invalide.' };
-  if (!creditAccountCode) return { ok: false, error: 'Compte au crédit invalide.' };
-  if (amount === null || amount <= 0) return { ok: false, error: 'Montant invalide (strictement positif attendu).' };
-  if (tvaAmount === null) return { ok: false, error: 'Montant de TVA invalide.' };
-  if (tvaAmount > amount) return { ok: false, error: 'La TVA ne peut pas dépasser le montant TTC.' };
+  if (typeof lines === 'string') return { ok: false, error: lines };
+  const journal = oneOf(b.journal, JOURNAL_CODES) ?? defaultJournal(lines);
   if (!inputType) return { ok: false, error: 'Mode de saisie invalide.' };
   if (!paymentMethod) return { ok: false, error: 'Mode de paiement invalide.' };
 
   return {
     ok: true,
     data: {
-      id: id ?? undefined, date, label, pieceRef, debitAccountCode, creditAccountCode,
-      amount, tvaAmount, status, detectedAnomaly, rawInput, inputType,
+      id: id ?? undefined, date, label, pieceRef, journal, lines, amount: totalDebit(lines), status, detectedAnomaly, rawInput, inputType,
       explanationSimplified, paymentMethod, auditTrail: parseAuditTrail(b.auditTrail, options.trusted),
     },
   };
@@ -283,6 +307,9 @@ export function validateAccountInput(body: unknown): Result<AccountInput> {
 // ---------- Factures ----------
 
 export interface InvoiceInputData {
+  kind: 'sale' | 'credit_note' | 'purchase';
+  externalRef: string | null;
+  originalInvoiceId: string | null;
   date: string; dueDate: string; mode: 'cash' | 'credit'; paymentMethod: string | null;
   customerName: string; customerPhone: string | null; customerEmail: string | null;
   customerAddress: string | null; customerTaxId: string | null;
@@ -294,11 +321,15 @@ export interface InvoiceInputData {
 export function validateInvoiceInput(body: unknown): Result<InvoiceInputData> {
   const b = (body ?? {}) as Record<string, unknown>;
   const date = isoDate(b.date);
-  const mode = oneOf(b.mode, ['cash', 'credit'] as const);
+  const kind = oneOf(b.kind, ['sale', 'credit_note', 'purchase'] as const) ?? 'sale';
+  const purchase = kind === 'purchase';
+  // Un avoir est imputé sur la créance (aucun remboursement immédiat).
+  const mode = kind === 'credit_note' ? 'credit' : oneOf(b.mode, ['cash', 'credit'] as const);
   const paymentMethod = oneOf(b.paymentMethod, PAYMENT_METHODS);
   const customerName = text(b.customerName, 160);
-  const customerAccountCode = (typeof b.customerAccountCode === 'string' && b.customerAccountCode.trim()) || '4111';
-  const salesAccountCode = (typeof b.salesAccountCode === 'string' && b.salesAccountCode.trim()) || '7011';
+  const customerAccountCode = (typeof b.customerAccountCode === 'string' && b.customerAccountCode.trim()) || (purchase ? '4011' : '4111');
+  const salesAccountCode = (typeof b.salesAccountCode === 'string' && b.salesAccountCode.trim()) || (purchase ? '6011' : '7011');
+  const originalInvoiceId = kind === 'credit_note' ? identifier(b.originalInvoiceId) : null;
   const vat = Number(b.vatRate ?? 0);
   const rawLines = Array.isArray(b.lines) ? b.lines.slice(0, 200) : [];
   const lines: InvoiceInputData['lines'] = [];
@@ -316,9 +347,15 @@ export function validateInvoiceInput(body: unknown): Result<InvoiceInputData> {
   if (!date) return { ok: false, error: 'Date de facture invalide.' };
   if (!mode) return { ok: false, error: 'Mode de facture invalide (comptant ou crédit).' };
   if (mode === 'cash' && !paymentMethod) return { ok: false, error: 'Mode de règlement requis pour une facture au comptant.' };
-  if (!customerName) return { ok: false, error: 'Nom du client requis.' };
-  if (!/^411[0-9]{0,9}$/.test(customerAccountCode)) return { ok: false, error: 'Le compte client doit être un compte 411.' };
-  if (!/^70[0-9]{1,10}$/.test(salesAccountCode)) return { ok: false, error: 'Le compte de vente doit être un compte 70x.' };
+  if (!customerName) return { ok: false, error: purchase ? 'Nom du fournisseur requis.' : 'Nom du client requis.' };
+  if (purchase) {
+    if (!/^40[0-9]{1,10}$/.test(customerAccountCode)) return { ok: false, error: 'Le compte fournisseur doit être un compte 40x.' };
+    if (!/^(6|2)[0-9]{1,11}$/.test(salesAccountCode)) return { ok: false, error: "Le compte d'achat doit être une charge (6x) ou une immobilisation (2x)." };
+  } else {
+    if (!/^411[0-9]{0,9}$/.test(customerAccountCode)) return { ok: false, error: 'Le compte client doit être un compte 411.' };
+    if (!/^70[0-9]{1,10}$/.test(salesAccountCode)) return { ok: false, error: 'Le compte de vente doit être un compte 70x.' };
+  }
+  if (kind === 'credit_note' && !originalInvoiceId) return { ok: false, error: "Un avoir doit référencer la facture d'origine." };
   if (!Number.isFinite(vat) || vat < 0 || vat > 100) return { ok: false, error: 'Taux de TVA invalide.' };
   if (lines.length === 0) return { ok: false, error: 'La facture doit contenir au moins une ligne.' };
   const dueDate = mode === 'cash' ? date : (isoDate(b.dueDate) ?? date);
@@ -327,6 +364,7 @@ export function validateInvoiceInput(body: unknown): Result<InvoiceInputData> {
   return {
     ok: true,
     data: {
+      kind, externalRef: purchase ? optionalText(b.externalRef, 80) : null, originalInvoiceId,
       date, dueDate, mode, paymentMethod: mode === 'cash' ? paymentMethod : null,
       customerName,
       customerPhone: optionalText(b.customerPhone, 40),

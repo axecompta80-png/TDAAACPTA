@@ -13,7 +13,12 @@ import {
   LogOut,
   Wallet,
   ShieldCheck,
-  FolderPlus
+  FolderPlus,
+  Plus,
+  FilePen,
+  FileText,
+  Truck,
+  Search
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -29,6 +34,10 @@ interface HeaderProps {
   pendingValidationCount: number;
   anomalyCount: number;
   onOpenExcelImport?: () => void;
+  /** Bouton « Nouveau » : écriture, facture client ou facture fournisseur. */
+  onNew?: (what: 'entry' | 'sale' | 'purchase') => void;
+  /** Recherche globale (libellé, pièce, n° de facture, compte, montant). */
+  onSearch?: (query: string) => void;
   unreadNotificationCount?: number;
   onOpenNotifications?: () => void;
   onOpenSettings?: () => void;
@@ -58,6 +67,8 @@ export const Header: React.FC<HeaderProps> = ({
   pendingValidationCount,
   anomalyCount,
   onOpenExcelImport,
+  onNew,
+  onSearch,
   unreadNotificationCount = 0,
   onOpenNotifications,
   onOpenSettings,
@@ -68,6 +79,8 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [dossierMenuOpen, setDossierMenuOpen] = React.useState(false);
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
+  const [newMenuOpen, setNewMenuOpen] = React.useState(false);
+  const [query, setQuery] = React.useState('');
 
   // Ferme les menus déroulants au clic extérieur, comportement attendu de tout menu contextuel.
   const rootRef = React.useRef<HTMLDivElement>(null);
@@ -76,6 +89,7 @@ export const Header: React.FC<HeaderProps> = ({
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setDossierMenuOpen(false);
         setUserMenuOpen(false);
+        setNewMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', onClickOutside);
@@ -207,15 +221,46 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {onOpenExcelImport && (
-            <button
-              onClick={onOpenExcelImport}
-              className="flex items-center gap-1.5 px-3 py-2.5 bg-gradient-to-r from-[#10B981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white rounded-xl text-xs font-bold transition-all shadow-2xs hover:shadow-xs"
-              title="Importer un document Excel (.xlsx, .xls, .ods, .csv)"
-            >
-              <FileSpreadsheet className="w-4 h-4 text-white shrink-0" />
-              <span className="hidden md:inline">Importer Excel</span>
-            </button>
+          {onSearch && (
+            <form onSubmit={e => { e.preventDefault(); if (query.trim()) onSearch(query.trim()); }} className="relative hidden lg:block">
+              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Rechercher (pièce, facture, compte, montant…)"
+                className="w-64 text-xs py-2.5 pl-8 pr-3 rounded-xl border border-[#DDD6FE] dark:border-[#35225E] bg-[#F8F7FD] dark:bg-[#1C0F38] text-[#1E084A] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#7024E3]/30" />
+              <Search className="w-3.5 h-3.5 text-[#7C709A] absolute left-2.5 top-3" />
+            </form>
+          )}
+
+          {(onNew || onOpenExcelImport) && (
+            <div className="relative">
+              <button
+                onClick={() => setNewMenuOpen(o => !o)}
+                className="flex items-center gap-1.5 px-3 py-2.5 bg-gradient-to-r from-[#10B981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white rounded-xl text-xs font-bold transition-all shadow-2xs hover:shadow-xs"
+                title="Nouvelle écriture, facture ou import"
+              >
+                <Plus className="w-4 h-4 text-white shrink-0" />
+                <span className="hidden md:inline">Nouveau</span>
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {newMenuOpen && (
+                <div className="absolute right-0 mt-2 w-60 bg-white dark:bg-[#1C0F38] border border-[#DDD6FE] dark:border-[#35225E] rounded-xl shadow-xl z-50 py-1.5 text-xs">
+                  {([
+                    onNew && ['entry', 'Écriture comptable', FilePen],
+                    onNew && ['sale', 'Facture client', FileText],
+                    onNew && ['purchase', 'Facture fournisseur', Truck],
+                  ].filter(Boolean) as [('entry' | 'sale' | 'purchase'), string, typeof Plus][]).map(([key, label, Icon]) => (
+                    <button key={key} onClick={() => { setNewMenuOpen(false); onNew!(key); }}
+                      className="w-full flex items-center gap-2 px-3.5 py-2 text-left font-semibold text-[#1E084A] dark:text-white hover:bg-[#F5F3FF] dark:hover:bg-[#2A174E]">
+                      <Icon className="w-4 h-4 text-[#7024E3]" /> {label}
+                    </button>
+                  ))}
+                  {onOpenExcelImport && (
+                    <button onClick={() => { setNewMenuOpen(false); onOpenExcelImport(); }}
+                      className="w-full flex items-center gap-2 px-3.5 py-2 text-left font-semibold text-[#1E084A] dark:text-white hover:bg-[#F5F3FF] dark:hover:bg-[#2A174E] border-t border-[#EDE9FE] dark:border-[#35225E]">
+                      <FileSpreadsheet className="w-4 h-4 text-[#10B981]" /> Importer un fichier Excel / CSV
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           <button

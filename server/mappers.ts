@@ -61,6 +61,7 @@ export function serializeDossier(row: any): ClientDossier {
     ifu: row.ifu,
     regimeFiscal: REGIME_FISCAL_FROM_DB[row.regimeFiscal],
     currency: row.currency,
+    lockedUntil: row.lockedUntil ? row.lockedUntil.toISOString().slice(0, 10) : undefined,
   };
 }
 
@@ -81,12 +82,18 @@ export function serializeEntry(row: any): JournalEntry {
     date: row.date.toISOString().split('T')[0],
     label: row.label,
     pieceRef: row.pieceRef,
-    debitAccount: `${row.debitAccountCode} - ${row.debitAccount.label}`,
-    debitAccountCode: row.debitAccountCode,
-    creditAccount: `${row.creditAccountCode} - ${row.creditAccount.label}`,
-    creditAccountCode: row.creditAccountCode,
+    journal: row.journal,
+    number: row.number,
+    lines: [...(row.lines ?? [])]
+      .sort((a: any, b: any) => a.position - b.position)
+      .map((l: any) => ({
+        accountCode: l.accountCode,
+        accountLabel: l.account?.label,
+        label: l.label ?? undefined,
+        debit: Number(l.debit),
+        credit: Number(l.credit),
+      })),
     amount: Number(row.amount),
-    tvaAmount: Number(row.tvaAmount),
     clientDossierId: row.clientDossierId,
     status: row.status,
     detectedAnomaly: row.detectedAnomaly ?? undefined,
@@ -100,6 +107,7 @@ export function serializeEntry(row: any): JournalEntry {
     validatedById: row.validatedById ?? undefined,
     validatedAt: row.validatedAt?.toISOString() ?? undefined,
     invoiceId: row.invoiceId ?? undefined,
+    reversalOfId: row.reversalOfId ?? undefined,
   };
 }
 
@@ -121,7 +129,10 @@ export function serializeInvoice(row: any): Invoice {
   return {
     id: row.id,
     clientDossierId: row.clientDossierId,
+    kind: row.kind ?? 'sale',
     number: row.number,
+    externalRef: row.externalRef ?? undefined,
+    originalInvoiceId: row.originalInvoiceId ?? undefined,
     date: day(row.date),
     dueDate: day(row.dueDate),
     mode: row.mode,

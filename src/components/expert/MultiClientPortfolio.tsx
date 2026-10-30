@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Filter
 } from 'lucide-react';
+import { prefixBalance } from '../../utils/entryLines';
 
 interface MultiClientPortfolioProps {
   dossiers: ClientDossier[];
@@ -44,8 +45,8 @@ export const MultiClientPortfolio: React.FC<MultiClientPortfolioProps> = ({
     const anomalies = dEntries.filter(e => e.status === 'anomaly').length;
     const validated = dEntries.filter(e => e.status === 'validated').length;
     const totalTurnover = dEntries
-      .filter(e => e.creditAccountCode.startsWith('7') || e.label.toLowerCase().includes('vente'))
-      .reduce((sum, e) => sum + e.amount, 0);
+      .filter(e => e.status === 'validated')
+      .reduce((sum, e) => sum - prefixBalance(e, '70'), 0);
     return {
       dossier,
       owner: dossier.isMain ? 'Entreprise' : (dossier.ownerName?.trim() || 'Sans propriétaire'),

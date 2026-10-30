@@ -50,7 +50,8 @@ function serializeDossier(row) {
     rccm: row.rccm,
     ifu: row.ifu,
     regimeFiscal: REGIME_FISCAL_FROM_DB[row.regimeFiscal],
-    currency: row.currency
+    currency: row.currency,
+    lockedUntil: row.lockedUntil ? row.lockedUntil.toISOString().slice(0, 10) : void 0
   };
 }
 function serializeAuditLog(row) {
@@ -69,12 +70,16 @@ function serializeEntry(row) {
     date: row.date.toISOString().split("T")[0],
     label: row.label,
     pieceRef: row.pieceRef,
-    debitAccount: `${row.debitAccountCode} - ${row.debitAccount.label}`,
-    debitAccountCode: row.debitAccountCode,
-    creditAccount: `${row.creditAccountCode} - ${row.creditAccount.label}`,
-    creditAccountCode: row.creditAccountCode,
+    journal: row.journal,
+    number: row.number,
+    lines: [...row.lines ?? []].sort((a, b) => a.position - b.position).map((l) => ({
+      accountCode: l.accountCode,
+      accountLabel: l.account?.label,
+      label: l.label ?? void 0,
+      debit: Number(l.debit),
+      credit: Number(l.credit)
+    })),
     amount: Number(row.amount),
-    tvaAmount: Number(row.tvaAmount),
     clientDossierId: row.clientDossierId,
     status: row.status,
     detectedAnomaly: row.detectedAnomaly ?? void 0,
@@ -87,7 +92,8 @@ function serializeEntry(row) {
     updatedById: row.updatedById ?? void 0,
     validatedById: row.validatedById ?? void 0,
     validatedAt: row.validatedAt?.toISOString() ?? void 0,
-    invoiceId: row.invoiceId ?? void 0
+    invoiceId: row.invoiceId ?? void 0,
+    reversalOfId: row.reversalOfId ?? void 0
   };
 }
 function serializeAccount(row) {
@@ -105,7 +111,10 @@ function serializeInvoice(row) {
   return {
     id: row.id,
     clientDossierId: row.clientDossierId,
+    kind: row.kind ?? "sale",
     number: row.number,
+    externalRef: row.externalRef ?? void 0,
+    originalInvoiceId: row.originalInvoiceId ?? void 0,
     date: day(row.date),
     dueDate: day(row.dueDate),
     mode: row.mode,
@@ -209,7 +218,10 @@ var init_syscohadaPlan = __esm({
       { code: "101", label: "Capital social", classNumber: 1, category: "bilan_passif" },
       { code: "102", label: "Capital personnel (exploitant individuel)", classNumber: 1, category: "bilan_passif" },
       { code: "111", label: "R\xE9serve l\xE9gale", classNumber: 1, category: "bilan_passif" },
+      { code: "121", label: "Report \xE0 nouveau cr\xE9diteur", classNumber: 1, category: "bilan_passif" },
+      { code: "129", label: "Report \xE0 nouveau d\xE9biteur", classNumber: 1, category: "bilan_passif" },
       { code: "131", label: "R\xE9sultat net de l\u2019exercice (B\xE9n\xE9fice)", classNumber: 1, category: "bilan_passif" },
+      { code: "139", label: "R\xE9sultat net de l\u2019exercice (Perte)", classNumber: 1, category: "bilan_passif" },
       { code: "162", label: "Emprunts et dettes bancaires", classNumber: 1, category: "bilan_passif" },
       // Classe 2 : Actif Immobilisé
       { code: "215", label: "Mat\xE9riel de transport (camions, tricycles)", classNumber: 2, category: "bilan_actif" },
@@ -225,12 +237,17 @@ var init_syscohadaPlan = __esm({
       { code: "321", label: "Mati\xE8res premi\xE8res et fournitures li\xE9es", classNumber: 3, category: "bilan_actif" },
       // Classe 4 : Comptes de Tiers
       { code: "4011", label: "Fournisseurs d\u2019exploitation", classNumber: 4, category: "bilan_passif" },
+      { code: "4091", label: "Fournisseurs, avances et acomptes vers\xE9s", classNumber: 4, category: "bilan_actif" },
       { code: "4111", label: "Clients ordinaires", classNumber: 4, category: "bilan_actif" },
+      { code: "4191", label: "Clients, avances et acomptes re\xE7us", classNumber: 4, category: "bilan_passif" },
       { code: "4211", label: "Personnel, salaires et r\xE9mun\xE9rations dues", classNumber: 4, category: "bilan_passif" },
       { code: "4311", label: "S\xE9curit\xE9 sociale (CNPS / CNSS / IPRES)", classNumber: 4, category: "bilan_passif" },
+      { code: "4421", label: "\xC9tat, imp\xF4ts et taxes \xE0 payer", classNumber: 4, category: "bilan_passif" },
       { code: "4431", label: "\xC9tat, TVA factur\xE9e sur ventes (18%)", classNumber: 4, category: "bilan_passif" },
+      { code: "4451", label: "\xC9tat, TVA r\xE9cup\xE9rable sur immobilisations", classNumber: 4, category: "bilan_actif" },
       { code: "4452", label: "\xC9tat, TVA d\xE9ductible sur achats et services (18%)", classNumber: 4, category: "bilan_actif" },
       { code: "4441", label: "\xC9tat, TVA due / \xE0 d\xE9caisser", classNumber: 4, category: "bilan_passif" },
+      { code: "4449", label: "\xC9tat, cr\xE9dit de TVA \xE0 reporter", classNumber: 4, category: "bilan_actif" },
       { code: "4471", label: "\xC9tat, Imp\xF4ts sur les b\xE9n\xE9fices & acomptes", classNumber: 4, category: "bilan_passif" },
       { code: "4711", label: "Compte d\u2019attente cr\xE9diteur/d\xE9biteur", classNumber: 4, category: "bilan_actif" },
       // Classe 5 : Trésorerie
@@ -252,10 +269,12 @@ var init_syscohadaPlan = __esm({
       { code: "6241", label: "Entretien et r\xE9parations mat\xE9riels", classNumber: 6, category: "charge" },
       { code: "6271", label: "Frais de t\xE9l\xE9communications & Internet", classNumber: 6, category: "charge" },
       { code: "6311", label: "Frais bancaires et commissions Mobile Money", classNumber: 6, category: "charge" },
-      { code: "6411", label: "Salaires et \xE9moluments des employ\xE9s", classNumber: 6, category: "charge" },
-      { code: "6451", label: "Charges sociales patronales", classNumber: 6, category: "charge" },
-      { code: "6811", label: "Dotations aux amortissements d\u2019exploitation", classNumber: 6, category: "charge" },
+      { code: "6411", label: "Imp\xF4ts et taxes directs (patente, taxes fonci\xE8res)", classNumber: 6, category: "charge" },
       { code: "6581", label: "Frais divers de gestion courante", classNumber: 6, category: "charge" },
+      { code: "6611", label: "Appointements, salaires et commissions", classNumber: 6, category: "charge" },
+      { code: "6641", label: "Charges sociales sur r\xE9mun\xE9rations (part patronale)", classNumber: 6, category: "charge" },
+      { code: "6711", label: "Int\xE9r\xEAts des emprunts", classNumber: 6, category: "charge" },
+      { code: "6811", label: "Dotations aux amortissements d\u2019exploitation", classNumber: 6, category: "charge" },
       // Classe 7 : Produits des Activités Ordinaires
       { code: "7011", label: "Ventes de marchandises au comptant", classNumber: 7, category: "produit" },
       { code: "7012", label: "Ventes de marchandises \xE0 cr\xE9dit", classNumber: 7, category: "produit" },
@@ -265,7 +284,8 @@ var init_syscohadaPlan = __esm({
       // Classe 8 : Comptes Hors Activités Ordinaires (HAO)
       { code: "8111", label: "Valeurs comptables des cessions d\u2019immobilisations", classNumber: 8, category: "charge" },
       { code: "8211", label: "Produits des cessions d\u2019immobilisations", classNumber: 8, category: "produit" },
-      { code: "8511", label: "Dons et subventions exceptionnelles re\xE7us", classNumber: 8, category: "produit" }
+      { code: "8411", label: "Produits HAO (dons et subventions exceptionnels re\xE7us)", classNumber: 8, category: "produit" },
+      { code: "8911", label: "Imp\xF4t sur le r\xE9sultat de l\u2019exercice", classNumber: 8, category: "charge" }
     ];
   }
 });
@@ -371,16 +391,16 @@ import express from "express";
 import cookieParser from "cookie-parser";
 
 // server/routes/index.ts
-import { Router as Router8 } from "express";
+import { Router as Router9 } from "express";
 
 // server/http.ts
 function handler(fn) {
   return (req, res, next) => fn(req, res).catch(next);
 }
 
-// server/routes/bootstrap.ts
+// server/routes/recurring.ts
 init_db();
-init_mappers();
+import { Router as Router2 } from "express";
 
 // server/access.ts
 init_db();
@@ -471,55 +491,81 @@ async function findAccessibleEntry(req, entryId) {
   return prisma.journalEntry.findFirst({ where: { id: entryId, ...entryScopeWhere(req) } });
 }
 
-// server/routes/bootstrap.ts
-var ENTRY_INCLUDE = { auditTrail: true, debitAccount: true, creditAccount: true };
-var DOSSIER_INCLUDE = { owner: { select: { name: true } } };
-async function buildBootstrapPayload(req) {
-  const dossierScope = dossierScopeWhere(req);
-  const [dossierRows, directoryRows, entryRows, notificationRows, settingsRows, accountRows, invoiceRows] = await Promise.all([
-    prisma.clientDossier.findMany({
-      where: dossierScope,
-      include: DOSSIER_INCLUDE,
-      orderBy: [{ isMain: "desc" }, { createdAt: "asc" }]
-    }),
-    prisma.clientDossier.findMany({
-      where: { organizationId: getAuthUser(req)?.organizationId ?? "__aucune__" },
-      select: { id: true, name: true, isMain: true, ownerName: true, owner: { select: { name: true } } },
-      orderBy: [{ isMain: "desc" }, { createdAt: "asc" }]
-    }),
-    prisma.journalEntry.findMany({
-      where: entryScopeWhere(req),
-      include: ENTRY_INCLUDE,
-      orderBy: { date: "desc" }
-    }),
-    prisma.appNotification.findMany({
-      where: notificationScopeWhere(req),
-      orderBy: { timestamp: "desc" }
-    }),
-    prisma.platformSettings.findMany({ where: { dossier: dossierScope } }),
-    // Comptes personnalisés des dossiers visibles (le plan standard est embarqué côté client).
-    prisma.syscohadaAccount.findMany({ where: { dossierId: { not: null }, dossier: { is: dossierScope } }, orderBy: { code: "asc" } }),
-    prisma.invoice.findMany({
-      where: { clientDossier: dossierScope },
-      include: { lines: true, payments: true },
-      orderBy: { number: "desc" }
-    })
-  ]);
-  return {
-    dossiers: dossierRows.map(serializeDossier),
-    directory: directoryRows.map((d) => ({ id: d.id, name: d.name, isMain: d.isMain, ownerName: d.owner?.name ?? d.ownerName ?? void 0 })),
-    entries: entryRows.map(serializeEntry),
-    notifications: notificationRows.map(serializeNotification),
-    settingsByDossier: Object.fromEntries(settingsRows.map((r) => [r.dossierId, serializePlatformSettings(r)])),
-    accounts: accountRows.map(serializeAccount),
-    invoices: invoiceRows.map(serializeInvoice)
-  };
+// src/utils/entryLines.ts
+var JOURNALS = [
+  { code: "VT", label: "Ventes" },
+  { code: "AC", label: "Achats" },
+  { code: "BQ", label: "Banque & Mobile Money" },
+  { code: "CA", label: "Caisse" },
+  { code: "OD", label: "Op\xE9rations diverses" },
+  { code: "AN", label: "\xC0-nouveaux (soldes d\u2019ouverture)" }
+];
+var JOURNAL_LABEL = Object.fromEntries(JOURNALS.map((j) => [j.code, j.label]));
+var TVA_COLLECTED = "4431";
+var TVA_DEDUCTIBLE = "4452";
+var round2 = (n) => Math.round(n * 100) / 100;
+function simpleLines(debit, credit, amount, tva = 0) {
+  const ttc = round2(amount);
+  const t = round2(Math.min(Math.max(0, tva), ttc));
+  if (t > 0 && t < ttc && credit.startsWith("7")) {
+    return [
+      { accountCode: debit, debit: ttc, credit: 0 },
+      { accountCode: credit, debit: 0, credit: round2(ttc - t) },
+      { accountCode: TVA_COLLECTED, debit: 0, credit: t }
+    ];
+  }
+  if (t > 0 && t < ttc && /^[236]/.test(debit)) {
+    return [
+      { accountCode: debit, debit: round2(ttc - t), credit: 0 },
+      { accountCode: TVA_DEDUCTIBLE, debit: t, credit: 0 },
+      { accountCode: credit, debit: 0, credit: ttc }
+    ];
+  }
+  return [
+    { accountCode: debit, debit: ttc, credit: 0 },
+    { accountCode: credit, debit: 0, credit: ttc }
+  ];
 }
-
-// server/routes/dossiers.ts
-init_db();
-init_mappers();
-import { Router } from "express";
+var totalDebit = (lines) => round2(lines.reduce((s, l) => s + l.debit, 0));
+var totalCredit = (lines) => round2(lines.reduce((s, l) => s + l.credit, 0));
+function linesError(lines) {
+  if (lines.length < 2) return "Une \xE9criture comporte au moins deux lignes.";
+  for (const [i, l] of lines.entries()) {
+    if (!l.accountCode) return `Ligne ${i + 1} : compte manquant.`;
+    if (l.debit < 0 || l.credit < 0) return `Ligne ${i + 1} : montant n\xE9gatif.`;
+    if (l.debit > 0 === l.credit > 0) return `Ligne ${i + 1} : un montant au d\xE9bit OU au cr\xE9dit.`;
+  }
+  const d = totalDebit(lines), c = totalCredit(lines);
+  if (Math.abs(d - c) > 5e-3) return `\xC9criture d\xE9s\xE9quilibr\xE9e : d\xE9bit ${d.toLocaleString("fr-FR")} \u2260 cr\xE9dit ${c.toLocaleString("fr-FR")}.`;
+  return null;
+}
+function defaultJournal(lines) {
+  const has = (re) => lines.some((l) => re.test(l.accountCode));
+  if (has(/^57/)) return "CA";
+  if (has(/^5[0-6]/)) return "BQ";
+  if (has(/^7/)) return "VT";
+  if (has(/^(6|2|40)/)) return "AC";
+  return "OD";
+}
+function accountsSummary(e) {
+  const codes = (side) => [...new Set(e.lines.filter((l) => l[side] > 0).map((l) => l.accountCode))].join(", ");
+  return `${codes("debit")} / ${codes("credit")}`;
+}
+var debitCodes = (e) => e.lines.filter((l) => l.debit > 0).map((l) => l.accountCode);
+var creditCodes = (e) => e.lines.filter((l) => l.credit > 0).map((l) => l.accountCode);
+function prefixBalance(e, ...prefixes) {
+  let s = 0;
+  for (const l of e.lines) if (prefixes.some((p) => l.accountCode.startsWith(p))) s += l.debit - l.credit;
+  return round2(s);
+}
+var reversedLines = (lines) => lines.map((l) => ({ accountCode: l.accountCode, label: l.label, debit: l.credit, credit: l.debit }));
+var isLocked = (date, lockedUntil) => !!lockedUntil && date <= lockedUntil;
+function nextMonthly(date, day2) {
+  const [y, m] = date.split("-").map(Number);
+  const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
+  const last = new Date(Date.UTC(ny, nm, 0)).getUTCDate();
+  return `${ny}-${String(nm).padStart(2, "0")}-${String(Math.min(day2, last)).padStart(2, "0")}`;
+}
 
 // server/validation.ts
 var REGIMES_FISCAUX = ["R\xE9el Simplifi\xE9", "R\xE9el Normal", "Synth\xE9tique / Forfait"];
@@ -527,7 +573,8 @@ var TRANSACTION_STATUSES = ["draft", "pending_review", "anomaly", "validated", "
 var ENTRY_STATUSES = ["draft", "pending_review", "anomaly"];
 var INPUT_MODES = ["text", "voice", "photo", "mobile_money", "manual", "excel_import"];
 var PAYMENT_METHODS = ["cash", "orange_money", "mtn_momo", "wave", "moov_money", "bank_transfer", "cheque"];
-var AUDIT_ACTIONS = ["created_by_ai", "validated_by_expert", "auto_validated", "edited_by_expert", "anomaly_flagged", "submitted_for_review", "unvalidated", "cancelled"];
+var AUDIT_ACTIONS = ["created_by_ai", "validated_by_expert", "auto_validated", "edited_by_expert", "anomaly_flagged", "submitted_for_review", "unvalidated", "cancelled", "reversed"];
+var JOURNAL_CODES = JOURNALS.map((j) => j.code);
 var CLIENT_AUDIT_ACTIONS = ["created_by_ai", "edited_by_expert", "anomaly_flagged"];
 function unwrap(result) {
   const outcome = result;
@@ -614,15 +661,35 @@ function parseAuditTrail(value, trusted = false) {
   }
   return rows;
 }
+function parseLines(b) {
+  if (!Array.isArray(b.lines)) {
+    const debit = text(b.debitAccountCode, 20);
+    const credit = text(b.creditAccountCode, 20);
+    const amount = money(b.amount);
+    const tva = money(b.tvaAmount ?? 0) ?? 0;
+    if (!debit || !credit || !amount) return "Lignes d'\xE9criture manquantes.";
+    return simpleLines(debit, credit, amount, tva);
+  }
+  if (b.lines.length > 200) return "\xC9criture limit\xE9e \xE0 200 lignes.";
+  const lines = [];
+  for (const [i, raw] of b.lines.entries()) {
+    const l = raw ?? {};
+    const accountCode = text(l.accountCode, 20);
+    const debit = money(l.debit ?? 0);
+    const credit = money(l.credit ?? 0);
+    if (!accountCode) return `Ligne ${i + 1} : compte invalide.`;
+    if (debit === null || credit === null) return `Ligne ${i + 1} : montant invalide.`;
+    if (debit === 0 && credit === 0) continue;
+    lines.push({ accountCode, debit, credit, label: optionalText(l.label, 300) ?? void 0 });
+  }
+  return linesError(lines) ?? lines;
+}
 function validateEntryInput(body, options = {}) {
   const b = body ?? {};
   const date = isoDate(b.date);
   const label = text(b.label, 300);
-  const pieceRef = text(b.pieceRef, 80);
-  const debitAccountCode = text(b.debitAccountCode, 20);
-  const creditAccountCode = text(b.creditAccountCode, 20);
-  const amount = money(b.amount);
-  const tvaAmount = money(b.tvaAmount ?? 0);
+  const pieceRef = optionalText(b.pieceRef, 80) ?? "";
+  const lines = parseLines(b);
   const status = oneOf(b.status, options.trusted ? TRANSACTION_STATUSES : ENTRY_STATUSES) ?? "pending_review";
   const inputType = oneOf(b.inputType, INPUT_MODES);
   const paymentMethod = oneOf(b.paymentMethod, PAYMENT_METHODS);
@@ -633,12 +700,8 @@ function validateEntryInput(body, options = {}) {
   if (options.requireId && !id) return { ok: false, error: "Identifiant d'\xE9criture invalide." };
   if (!date) return { ok: false, error: "Date d'\xE9criture invalide." };
   if (!label) return { ok: false, error: "Le libell\xE9 de l'\xE9criture est requis." };
-  if (!pieceRef) return { ok: false, error: "La r\xE9f\xE9rence de pi\xE8ce est requise." };
-  if (!debitAccountCode) return { ok: false, error: "Compte au d\xE9bit invalide." };
-  if (!creditAccountCode) return { ok: false, error: "Compte au cr\xE9dit invalide." };
-  if (amount === null || amount <= 0) return { ok: false, error: "Montant invalide (strictement positif attendu)." };
-  if (tvaAmount === null) return { ok: false, error: "Montant de TVA invalide." };
-  if (tvaAmount > amount) return { ok: false, error: "La TVA ne peut pas d\xE9passer le montant TTC." };
+  if (typeof lines === "string") return { ok: false, error: lines };
+  const journal = oneOf(b.journal, JOURNAL_CODES) ?? defaultJournal(lines);
   if (!inputType) return { ok: false, error: "Mode de saisie invalide." };
   if (!paymentMethod) return { ok: false, error: "Mode de paiement invalide." };
   return {
@@ -648,10 +711,9 @@ function validateEntryInput(body, options = {}) {
       date,
       label,
       pieceRef,
-      debitAccountCode,
-      creditAccountCode,
-      amount,
-      tvaAmount,
+      journal,
+      lines,
+      amount: totalDebit(lines),
       status,
       detectedAnomaly,
       rawInput,
@@ -740,11 +802,14 @@ function validateAccountInput(body) {
 function validateInvoiceInput(body) {
   const b = body ?? {};
   const date = isoDate(b.date);
-  const mode = oneOf(b.mode, ["cash", "credit"]);
+  const kind = oneOf(b.kind, ["sale", "credit_note", "purchase"]) ?? "sale";
+  const purchase = kind === "purchase";
+  const mode = kind === "credit_note" ? "credit" : oneOf(b.mode, ["cash", "credit"]);
   const paymentMethod = oneOf(b.paymentMethod, PAYMENT_METHODS);
   const customerName = text(b.customerName, 160);
-  const customerAccountCode = typeof b.customerAccountCode === "string" && b.customerAccountCode.trim() || "4111";
-  const salesAccountCode = typeof b.salesAccountCode === "string" && b.salesAccountCode.trim() || "7011";
+  const customerAccountCode = typeof b.customerAccountCode === "string" && b.customerAccountCode.trim() || (purchase ? "4011" : "4111");
+  const salesAccountCode = typeof b.salesAccountCode === "string" && b.salesAccountCode.trim() || (purchase ? "6011" : "7011");
+  const originalInvoiceId = kind === "credit_note" ? identifier(b.originalInvoiceId) : null;
   const vat = Number(b.vatRate ?? 0);
   const rawLines = Array.isArray(b.lines) ? b.lines.slice(0, 200) : [];
   const lines = [];
@@ -761,9 +826,15 @@ function validateInvoiceInput(body) {
   if (!date) return { ok: false, error: "Date de facture invalide." };
   if (!mode) return { ok: false, error: "Mode de facture invalide (comptant ou cr\xE9dit)." };
   if (mode === "cash" && !paymentMethod) return { ok: false, error: "Mode de r\xE8glement requis pour une facture au comptant." };
-  if (!customerName) return { ok: false, error: "Nom du client requis." };
-  if (!/^411[0-9]{0,9}$/.test(customerAccountCode)) return { ok: false, error: "Le compte client doit \xEAtre un compte 411." };
-  if (!/^70[0-9]{1,10}$/.test(salesAccountCode)) return { ok: false, error: "Le compte de vente doit \xEAtre un compte 70x." };
+  if (!customerName) return { ok: false, error: purchase ? "Nom du fournisseur requis." : "Nom du client requis." };
+  if (purchase) {
+    if (!/^40[0-9]{1,10}$/.test(customerAccountCode)) return { ok: false, error: "Le compte fournisseur doit \xEAtre un compte 40x." };
+    if (!/^(6|2)[0-9]{1,11}$/.test(salesAccountCode)) return { ok: false, error: "Le compte d'achat doit \xEAtre une charge (6x) ou une immobilisation (2x)." };
+  } else {
+    if (!/^411[0-9]{0,9}$/.test(customerAccountCode)) return { ok: false, error: "Le compte client doit \xEAtre un compte 411." };
+    if (!/^70[0-9]{1,10}$/.test(salesAccountCode)) return { ok: false, error: "Le compte de vente doit \xEAtre un compte 70x." };
+  }
+  if (kind === "credit_note" && !originalInvoiceId) return { ok: false, error: "Un avoir doit r\xE9f\xE9rencer la facture d'origine." };
   if (!Number.isFinite(vat) || vat < 0 || vat > 100) return { ok: false, error: "Taux de TVA invalide." };
   if (lines.length === 0) return { ok: false, error: "La facture doit contenir au moins une ligne." };
   const dueDate = mode === "cash" ? date : isoDate(b.dueDate) ?? date;
@@ -771,6 +842,9 @@ function validateInvoiceInput(body) {
   return {
     ok: true,
     data: {
+      kind,
+      externalRef: purchase ? optionalText(b.externalRef, 80) : null,
+      originalInvoiceId,
       date,
       dueDate,
       mode,
@@ -797,104 +871,63 @@ function optionalReason(body) {
   return optionalText((body ?? {}).reason, 300);
 }
 
-// server/routes/dossiers.ts
-init_seedData();
-var router = Router();
-var dossierData = (d) => ({
-  name: d.name,
-  managerName: d.managerName,
-  phone: d.phone,
-  activity: d.activity,
-  city: d.city,
-  country: d.country,
-  rccm: d.rccm,
-  ifu: d.ifu,
-  regimeFiscal: REGIME_FISCAL_TO_DB[d.regimeFiscal],
-  currency: d.currency
-});
-var mainOnly = (res) => res.status(403).json({ error: "R\xE9serv\xE9 au compte principal de l'entreprise." });
-router.get("/dossiers", handler(async (req, res) => {
-  const rows = await prisma.clientDossier.findMany({
-    where: dossierScopeWhere(req),
-    include: DOSSIER_INCLUDE,
-    orderBy: [{ isMain: "desc" }, { createdAt: "asc" }]
-  });
-  res.json(rows.map(serializeDossier));
-}));
-router.get("/dossiers/:id", handler(async (req, res) => {
-  const id = identifier(req.params.id);
-  if (!id) return res.status(400).json({ error: "Identifiant de dossier invalide." });
-  const dossier = await findAccessibleDossier(req, id);
-  if (!dossier) {
-    const sameOrg = await prisma.clientDossier.findFirst({ where: { id, organizationId: getAuthUser(req)?.organizationId ?? "" }, select: { id: true } });
-    return sameOrg ? res.status(403).json({ error: NO_ACCESS }) : res.status(404).json({ error: "Dossier introuvable." });
-  }
-  const [full, entryRows] = await Promise.all([
-    prisma.clientDossier.findUnique({ where: { id }, include: DOSSIER_INCLUDE }),
-    prisma.journalEntry.findMany({ where: { clientDossierId: id }, include: ENTRY_INCLUDE, orderBy: { date: "desc" } })
-  ]);
-  res.json({ dossier: serializeDossier(full), entries: entryRows });
-}));
-router.post("/company", handler(async (req, res) => {
-  if (!isMainAccount(req)) return mainOnly(res);
-  const organizationId = getAuthUser(req).organizationId;
-  if (await prisma.clientDossier.findFirst({ where: { organizationId, isMain: true } })) {
-    return res.status(409).json({ error: "Les informations de l'entreprise sont d\xE9j\xE0 enregistr\xE9es." });
-  }
-  const d = unwrap(validateDossierInput(req.body));
-  const created = await prisma.$transaction(async (tx) => {
-    const row = await tx.clientDossier.create({ data: { ...dossierData(d), organizationId, isMain: true } });
-    await createDefaultPlatformSettings(tx, row.id);
-    await tx.organization.update({ where: { id: organizationId }, data: { name: d.name } });
-    return tx.clientDossier.findUniqueOrThrow({ where: { id: row.id }, include: DOSSIER_INCLUDE });
-  });
-  res.status(201).json(serializeDossier(created));
-}));
-router.post("/dossiers", handler(async (req, res) => {
-  if (!isMainAccount(req)) return mainOnly(res);
-  const organizationId = getAuthUser(req).organizationId;
-  const { name, ownerName } = req.body ?? {};
-  const cleanName = typeof name === "string" ? name.trim().slice(0, 160) : "";
-  const cleanOwner = typeof ownerName === "string" ? ownerName.trim().slice(0, 120) : "";
-  if (!cleanName) return res.status(400).json({ error: "Nom du dossier requis." });
-  const main = await prisma.clientDossier.findFirst({ where: { organizationId, isMain: true }, include: { settings: true } });
-  if (!main) return res.status(400).json({ error: "Renseignez d'abord les informations de l'entreprise." });
-  const created = await prisma.$transaction(async (tx) => {
-    const { id: _id, isMain: _m, createdAt: _c, updatedAt: _u, settings, ...fiscal } = main;
-    const row = await tx.clientDossier.create({ data: { ...fiscal, name: cleanName, ownerName: cleanOwner || null, isMain: false } });
-    if (settings) await tx.platformSettings.create({ data: { ...copySettings(settings), dossierId: row.id } });
-    else await createDefaultPlatformSettings(tx, row.id);
-    return tx.clientDossier.findUniqueOrThrow({ where: { id: row.id }, include: DOSSIER_INCLUDE });
-  });
-  res.status(201).json(serializeDossier(created));
-}));
-router.post("/dossiers/:id/update", handler(async (req, res) => {
-  const id = identifier(req.params.id);
-  if (!id) return res.status(400).json({ error: "Identifiant de dossier invalide." });
-  const existing = await findAccessibleDossier(req, id);
-  if (!existing) return res.status(404).json({ error: "Dossier introuvable." });
-  const d = unwrap(validateDossierInput(req.body));
-  const updated = await prisma.clientDossier.update({ where: { id }, data: dossierData(d), include: DOSSIER_INCLUDE });
-  if (existing.isMain) await prisma.organization.update({ where: { id: existing.organizationId }, data: { name: d.name } });
-  res.json(serializeDossier(updated));
-}));
-router.post("/dossiers/:id/delete", handler(async (req, res) => {
-  const id = identifier(req.params.id);
-  if (!id) return res.status(400).json({ error: "Identifiant de dossier invalide." });
-  const existing = await findAccessibleDossier(req, id);
-  if (!existing) return res.status(404).json({ error: "Dossier introuvable." });
-  if (!isMainAccount(req)) return mainOnly(res);
-  if (existing.isMain) return res.status(400).json({ error: "La comptabilit\xE9 de l'entreprise ne peut pas \xEAtre supprim\xE9e." });
-  await prisma.clientDossier.delete({ where: { id } });
-  res.status(204).end();
-}));
-var dossiers_default = router;
-
 // server/routes/entries.ts
 init_db();
 init_mappers();
-import { Router as Router2 } from "express";
-var router2 = Router2();
+import { Router } from "express";
+
+// server/routes/bootstrap.ts
+init_db();
+init_mappers();
+var ENTRY_INCLUDE = { auditTrail: true, lines: { include: { account: { select: { label: true } } } } };
+var DOSSIER_INCLUDE = { owner: { select: { name: true } } };
+async function buildBootstrapPayload(req) {
+  const dossierScope = dossierScopeWhere(req);
+  await generateDueRecurring(req);
+  const [dossierRows, directoryRows, entryRows, notificationRows, settingsRows, accountRows, invoiceRows, recurringRows] = await Promise.all([
+    prisma.clientDossier.findMany({
+      where: dossierScope,
+      include: DOSSIER_INCLUDE,
+      orderBy: [{ isMain: "desc" }, { createdAt: "asc" }]
+    }),
+    prisma.clientDossier.findMany({
+      where: { organizationId: getAuthUser(req)?.organizationId ?? "__aucune__" },
+      select: { id: true, name: true, isMain: true, ownerName: true, owner: { select: { name: true } } },
+      orderBy: [{ isMain: "desc" }, { createdAt: "asc" }]
+    }),
+    prisma.journalEntry.findMany({
+      where: entryScopeWhere(req),
+      include: ENTRY_INCLUDE,
+      orderBy: { date: "desc" }
+    }),
+    prisma.appNotification.findMany({
+      where: notificationScopeWhere(req),
+      orderBy: { timestamp: "desc" }
+    }),
+    prisma.platformSettings.findMany({ where: { dossier: dossierScope } }),
+    // Comptes personnalisés des dossiers visibles (le plan standard est embarqué côté client).
+    prisma.syscohadaAccount.findMany({ where: { dossierId: { not: null }, dossier: { is: dossierScope } }, orderBy: { code: "asc" } }),
+    prisma.invoice.findMany({
+      where: { clientDossier: dossierScope },
+      include: { lines: true, payments: true },
+      orderBy: { number: "desc" }
+    }),
+    prisma.recurringEntry.findMany({ where: { active: true, clientDossier: dossierScope }, orderBy: { nextDate: "asc" } })
+  ]);
+  return {
+    dossiers: dossierRows.map(serializeDossier),
+    directory: directoryRows.map((d) => ({ id: d.id, name: d.name, isMain: d.isMain, ownerName: d.owner?.name ?? d.ownerName ?? void 0 })),
+    entries: entryRows.map(serializeEntry),
+    notifications: notificationRows.map(serializeNotification),
+    settingsByDossier: Object.fromEntries(settingsRows.map((r) => [r.dossierId, serializePlatformSettings(r)])),
+    accounts: accountRows.map(serializeAccount),
+    invoices: invoiceRows.map(serializeInvoice),
+    recurring: recurringRows.map(serializeRecurring)
+  };
+}
+
+// server/routes/entries.ts
+var router = Router();
 var EDITABLE = ["draft", "pending_review", "anomaly"];
 async function assertAccountsUsable(codes, dossierId) {
   const unique = [...new Set(codes)];
@@ -905,6 +938,15 @@ async function assertAccountsUsable(codes, dossierId) {
   const known = new Set(found.map((f) => f.code));
   const missing = unique.filter((c) => !known.has(c));
   return missing.length ? `Compte inconnu ou inactif pour ce dossier : ${missing.join(", ")}.` : null;
+}
+var fr = (d) => d.split("-").reverse().join("/");
+function lockError(dossier, date) {
+  const until = dossier.lockedUntil?.toISOString().slice(0, 10);
+  const day2 = typeof date === "string" ? date : date.toISOString().slice(0, 10);
+  return isLocked(day2, until) ? `P\xE9riode bloqu\xE9e jusqu'au ${fr(until)} (d\xE9clar\xE9e ou cl\xF4tur\xE9e) : aucune \xE9criture ne peut y \xEAtre ajout\xE9e ou modifi\xE9e. Pour corriger, passez une contre-passation \xE0 une date ult\xE9rieure.` : null;
+}
+async function dossierOf(id) {
+  return prisma.clientDossier.findUniqueOrThrow({ where: { id }, select: { id: true, lockedUntil: true } });
 }
 function userId(req) {
   return getAuthUser(req).sub;
@@ -920,18 +962,42 @@ function autoValidationData(author, uid) {
     auditTrail: { create: { action: "auto_validated", author, notes: "Valid\xE9e automatiquement (aucune anomalie d\xE9tect\xE9e)." } }
   };
 }
-function entryCreateData(e, dossier, createdById, author) {
-  const dossierId = dossier.id;
+var linesCreate = (lines) => ({
+  create: lines.map((l, position) => ({ position, accountCode: l.accountCode, label: l.label, debit: l.debit, credit: l.credit }))
+});
+function numberer(tx, dossierId) {
+  const next = /* @__PURE__ */ new Map();
+  return async (journal) => {
+    if (!next.has(journal)) {
+      const last = await tx.journalEntry.aggregate({ where: { clientDossierId: dossierId, journal }, _max: { number: true } });
+      next.set(journal, (last._max.number ?? 0) + 1);
+    }
+    const n = next.get(journal);
+    next.set(journal, n + 1);
+    return n;
+  };
+}
+var defaultPieceRef = (journal, n) => `${journal}-${String(n).padStart(5, "0")}`;
+async function withNumberRetry(fn) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (e?.code !== "P2002" || attempt === 2) throw e;
+    }
+  }
+}
+function entryCreateData(e, dossierId, number, createdById, author) {
   const auto = autoValidates(e);
   return {
     id: e.id,
     date: new Date(e.date),
     label: e.label,
-    pieceRef: e.pieceRef,
-    debitAccountCode: e.debitAccountCode,
-    creditAccountCode: e.creditAccountCode,
+    pieceRef: e.pieceRef || defaultPieceRef(e.journal, number),
+    journal: e.journal,
+    number,
     amount: e.amount,
-    tvaAmount: e.tvaAmount,
+    lines: linesCreate(e.lines),
     clientDossierId: dossierId,
     status: e.status,
     detectedAnomaly: e.detectedAnomaly,
@@ -953,18 +1019,24 @@ function entryCreateData(e, dossier, createdById, author) {
     }
   };
 }
-router2.post("/entries", handler(async (req, res) => {
+router.post("/entries", handler(async (req, res) => {
   const dossierId = identifier((req.body ?? {}).clientDossierId);
   if (!dossierId) return res.status(400).json({ error: "Dossier comptable invalide." });
   const dossier = await findAccessibleDossier(req, dossierId);
   if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
   const e = unwrap(validateEntryInput(req.body));
-  const accountError = await assertAccountsUsable([e.debitAccountCode, e.creditAccountCode], dossierId);
+  const locked = lockError(dossier, e.date);
+  if (locked) return res.status(409).json({ error: locked });
+  const accountError = await assertAccountsUsable(e.lines.map((l) => l.accountCode), dossierId);
   if (accountError) return res.status(400).json({ error: accountError });
-  const created = await prisma.journalEntry.create({ data: entryCreateData(e, dossier, userId(req), await actorName(req)), include: ENTRY_INCLUDE });
+  const author = await actorName(req);
+  const created = await withNumberRetry(() => prisma.$transaction(async (tx) => {
+    const number = await numberer(tx, dossierId)(e.journal);
+    return tx.journalEntry.create({ data: entryCreateData(e, dossierId, number, userId(req), author), include: ENTRY_INCLUDE });
+  }));
   res.status(201).json(serializeEntry(created));
 }));
-router2.post("/entries/import", handler(async (req, res) => {
+router.post("/entries/import", handler(async (req, res) => {
   const list = Array.isArray((req.body ?? {}).entries) ? req.body.entries : [];
   if (list.length === 0) return res.status(400).json({ error: "Aucune \xE9criture \xE0 importer." });
   if (list.length > 5e3) return res.status(400).json({ error: "Import limit\xE9 \xE0 5000 \xE9critures par op\xE9ration." });
@@ -976,47 +1048,66 @@ router2.post("/entries/import", handler(async (req, res) => {
     const dossier = await findAccessibleDossier(req, dossierId);
     if (!dossier) return res.status(403).json({ error: "Import refus\xE9 : dossier hors de votre p\xE9rim\xE8tre." });
     const e = unwrap(validateEntryInput(raw, { requireId: true }));
-    const accountError = await assertAccountsUsable([e.debitAccountCode, e.creditAccountCode], dossierId);
+    const locked = lockError(dossier, e.date);
+    if (locked) return res.status(409).json({ error: `\xAB ${e.label} \xBB : ${locked}` });
+    const accountError = await assertAccountsUsable(e.lines.map((l) => l.accountCode), dossierId);
     if (accountError) return res.status(400).json({ error: accountError });
-    rows.push(entryCreateData(e, dossier, userId(req), author));
+    rows.push({ e, dossierId });
   }
-  const created = await prisma.$transaction(rows.map((data) => prisma.journalEntry.create({ data, include: ENTRY_INCLUDE })));
+  const created = await withNumberRetry(() => prisma.$transaction(async (tx) => {
+    const numbers = /* @__PURE__ */ new Map();
+    const out = [];
+    for (const { e, dossierId } of rows) {
+      if (!numbers.has(dossierId)) numbers.set(dossierId, numberer(tx, dossierId));
+      const number = await numbers.get(dossierId)(e.journal);
+      out.push(await tx.journalEntry.create({ data: entryCreateData(e, dossierId, number, userId(req), author), include: ENTRY_INCLUDE }));
+    }
+    return out;
+  }, { timeout: 12e4, maxWait: 1e4 }));
   res.status(201).json(created.map(serializeEntry));
 }));
-router2.post("/entries/:id/update", handler(async (req, res) => {
+router.post("/entries/:id/update", handler(async (req, res) => {
   const id = identifier(req.params.id);
   if (!id) return res.status(400).json({ error: "Identifiant d'\xE9criture invalide." });
   const existing = await findAccessibleEntry(req, id);
   if (!existing) return res.status(404).json({ error: "\xC9criture introuvable." });
   if (!EDITABLE.includes(existing.status)) {
-    return res.status(409).json({ error: "\xC9criture valid\xE9e ou annul\xE9e : modification impossible (d\xE9validez-la d\u2019abord)." });
+    return res.status(409).json({ error: "\xC9criture valid\xE9e ou annul\xE9e : modification impossible (d\xE9validez-la ou contre-passez-la)." });
   }
   if (existing.invoiceId) {
     return res.status(409).json({ error: "\xC9criture g\xE9n\xE9r\xE9e par une facture : modifiez la facture." });
   }
   const e = unwrap(validateEntryInput(req.body));
-  const accountError = await assertAccountsUsable([e.debitAccountCode, e.creditAccountCode], existing.clientDossierId);
+  const dossier = await dossierOf(existing.clientDossierId);
+  const locked = lockError(dossier, existing.date) ?? lockError(dossier, e.date);
+  if (locked) return res.status(409).json({ error: locked });
+  const accountError = await assertAccountsUsable(e.lines.map((l) => l.accountCode), existing.clientDossierId);
   if (accountError) return res.status(400).json({ error: accountError });
   const auto = autoValidates(e);
-  await prisma.journalEntry.update({
-    where: { id },
-    data: {
-      date: new Date(e.date),
-      label: e.label,
-      pieceRef: e.pieceRef,
-      debitAccountCode: e.debitAccountCode,
-      creditAccountCode: e.creditAccountCode,
-      amount: e.amount,
-      tvaAmount: e.tvaAmount,
-      status: e.status,
-      detectedAnomaly: e.detectedAnomaly ?? null,
-      rawInput: e.rawInput,
-      inputType: e.inputType,
-      explanationSimplified: e.explanationSimplified,
-      paymentMethod: e.paymentMethod,
-      updatedById: userId(req)
-    }
-  });
+  await withNumberRetry(() => prisma.$transaction(async (tx) => {
+    const number = e.journal === existing.journal ? existing.number : await numberer(tx, existing.clientDossierId)(e.journal);
+    const keepRef = e.pieceRef && e.pieceRef !== defaultPieceRef(existing.journal, existing.number);
+    await tx.journalLine.deleteMany({ where: { entryId: id } });
+    await tx.journalEntry.update({
+      where: { id },
+      data: {
+        date: new Date(e.date),
+        label: e.label,
+        pieceRef: keepRef ? e.pieceRef : defaultPieceRef(e.journal, number),
+        journal: e.journal,
+        number,
+        amount: e.amount,
+        lines: linesCreate(e.lines),
+        status: e.status,
+        detectedAnomaly: e.detectedAnomaly ?? null,
+        rawInput: e.rawInput,
+        inputType: e.inputType,
+        explanationSimplified: e.explanationSimplified,
+        paymentMethod: e.paymentMethod,
+        updatedById: userId(req)
+      }
+    });
+  }));
   for (const a of e.auditTrail) {
     await prisma.auditLog.upsert({
       where: { id: a.id },
@@ -1038,7 +1129,7 @@ router2.post("/entries/:id/update", handler(async (req, res) => {
   const fresh = await prisma.journalEntry.findUniqueOrThrow({ where: { id }, include: ENTRY_INCLUDE });
   res.json(serializeEntry(fresh));
 }));
-router2.post("/entries/:id/submit", handler(async (req, res) => {
+router.post("/entries/:id/submit", handler(async (req, res) => {
   const id = identifier(req.params.id);
   const existing = id ? await findAccessibleEntry(req, id) : null;
   if (!existing) return res.status(404).json({ error: "\xC9criture introuvable." });
@@ -1053,7 +1144,7 @@ router2.post("/entries/:id/submit", handler(async (req, res) => {
   });
   res.json(serializeEntry(row));
 }));
-router2.post("/entries/batch-validate", handler(async (req, res) => {
+router.post("/entries/batch-validate", handler(async (req, res) => {
   const user = getAuthUser(req);
   const rawIds = Array.isArray((req.body ?? {}).ids) ? req.body.ids : [];
   const ids = rawIds.map(identifier).filter((v) => Boolean(v));
@@ -1071,6 +1162,11 @@ router2.post("/entries/batch-validate", handler(async (req, res) => {
       refused.push({ id, reason: entry.status === "draft" ? "Brouillon non soumis." : "D\xE9j\xE0 valid\xE9e ou annul\xE9e." });
       continue;
     }
+    const locked = lockError(await dossierOf(entry.clientDossierId), entry.date);
+    if (locked) {
+      refused.push({ id, reason: locked });
+      continue;
+    }
     await prisma.journalEntry.update({
       where: { id },
       data: {
@@ -1086,12 +1182,14 @@ router2.post("/entries/batch-validate", handler(async (req, res) => {
   const rows = await prisma.journalEntry.findMany({ where: { id: { in: validatedIds } }, include: ENTRY_INCLUDE });
   res.json({ validated: rows.map(serializeEntry), refused });
 }));
-router2.post("/entries/:id/unvalidate", handler(async (req, res) => {
+router.post("/entries/:id/unvalidate", handler(async (req, res) => {
   const id = identifier(req.params.id);
   const existing = id ? await findAccessibleEntry(req, id) : null;
   if (!existing) return res.status(404).json({ error: "\xC9criture introuvable." });
   if (existing.status !== "validated") return res.status(409).json({ error: "Seule une \xE9criture valid\xE9e peut \xEAtre d\xE9valid\xE9e." });
   if (existing.invoiceId) return res.status(409).json({ error: "\xC9criture g\xE9n\xE9r\xE9e par une facture : annulez la facture." });
+  const locked = lockError(await dossierOf(existing.clientDossierId), existing.date);
+  if (locked) return res.status(409).json({ error: locked });
   const row = await prisma.journalEntry.update({
     where: { id: existing.id },
     data: {
@@ -1104,12 +1202,14 @@ router2.post("/entries/:id/unvalidate", handler(async (req, res) => {
   });
   res.json(serializeEntry(row));
 }));
-router2.post("/entries/:id/cancel", handler(async (req, res) => {
+router.post("/entries/:id/cancel", handler(async (req, res) => {
   const id = identifier(req.params.id);
   const existing = id ? await findAccessibleEntry(req, id) : null;
   if (!existing) return res.status(404).json({ error: "\xC9criture introuvable." });
   if (existing.status === "cancelled") return res.status(409).json({ error: "\xC9criture d\xE9j\xE0 annul\xE9e." });
   if (existing.invoiceId) return res.status(409).json({ error: "\xC9criture g\xE9n\xE9r\xE9e par une facture : annulez la facture." });
+  const locked = lockError(await dossierOf(existing.clientDossierId), existing.date);
+  if (locked) return res.status(409).json({ error: locked });
   const author = await actorName(req);
   const [, row] = await prisma.$transaction([
     prisma.invoicePayment.deleteMany({ where: { entryId: existing.id } }),
@@ -1124,14 +1224,282 @@ router2.post("/entries/:id/cancel", handler(async (req, res) => {
   ]);
   res.json(serializeEntry(row));
 }));
-var entries_default = router2;
+router.post("/entries/:id/reverse", handler(async (req, res) => {
+  const id = identifier(req.params.id);
+  const existing = id ? await prisma.journalEntry.findFirst({ where: { id }, include: { lines: true, reversals: true } }) : null;
+  if (!existing || !await findAccessibleEntry(req, existing.id)) return res.status(404).json({ error: "\xC9criture introuvable." });
+  if (existing.status !== "validated") return res.status(409).json({ error: "Seule une \xE9criture valid\xE9e se contre-passe." });
+  if (existing.invoiceId) return res.status(409).json({ error: "\xC9criture g\xE9n\xE9r\xE9e par une facture : annulez la facture." });
+  if (existing.reversalOfId) return res.status(409).json({ error: "Cette \xE9criture est d\xE9j\xE0 une contre-passation." });
+  if (existing.reversals.some((r) => r.status !== "cancelled")) return res.status(409).json({ error: "\xC9criture d\xE9j\xE0 contre-pass\xE9e." });
+  const date = isoDate((req.body ?? {}).date) ?? (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  const dossier = await dossierOf(existing.clientDossierId);
+  const locked = lockError(dossier, date);
+  if (locked) return res.status(409).json({ error: locked });
+  const user = userId(req);
+  const author = await actorName(req);
+  const reason = optionalReason(req.body);
+  const lines = reversedLines([...existing.lines].sort((a, b) => a.position - b.position).map((l) => ({ accountCode: l.accountCode, label: l.label ?? void 0, debit: Number(l.debit), credit: Number(l.credit) })));
+  const label = `Contre-passation ${existing.pieceRef} \u2014 ${existing.label}`.slice(0, 300);
+  const reversal = await withNumberRetry(() => prisma.$transaction(async (tx) => {
+    const number = await numberer(tx, existing.clientDossierId)(existing.journal);
+    await tx.invoicePayment.deleteMany({ where: { entryId: existing.id } });
+    await tx.auditLog.create({ data: { journalEntryId: existing.id, action: "reversed", author, notes: reason ?? `Contre-pass\xE9e le ${fr(date)}.` } });
+    return tx.journalEntry.create({
+      data: {
+        date: new Date(date),
+        label,
+        pieceRef: `CP-${existing.pieceRef}`.slice(0, 80),
+        journal: existing.journal,
+        number,
+        amount: existing.amount,
+        lines: linesCreate(lines),
+        clientDossierId: existing.clientDossierId,
+        status: "validated",
+        rawInput: label,
+        inputType: "manual",
+        paymentMethod: existing.paymentMethod,
+        explanationSimplified: `Annule l'\xE9criture ${existing.pieceRef} du ${fr(existing.date.toISOString().slice(0, 10))} en inversant le d\xE9bit et le cr\xE9dit.`,
+        createdById: user,
+        validatedById: user,
+        validatedAt: /* @__PURE__ */ new Date(),
+        reversalOfId: existing.id,
+        auditTrail: { create: { action: "reversed", author, notes: reason ?? `Contre-passation de ${existing.pieceRef}.` } }
+      },
+      include: ENTRY_INCLUDE
+    });
+  }));
+  const original = await prisma.journalEntry.findUniqueOrThrow({ where: { id: existing.id }, include: ENTRY_INCLUDE });
+  res.status(201).json({ original: serializeEntry(original), reversal: serializeEntry(reversal) });
+}));
+var entries_default = router;
+
+// server/routes/recurring.ts
+var router2 = Router2();
+function serializeRecurring(r) {
+  return {
+    id: r.id,
+    clientDossierId: r.clientDossierId,
+    label: r.label,
+    journal: r.journal,
+    lines: r.lines,
+    day: r.day,
+    nextDate: r.nextDate.toISOString().slice(0, 10),
+    active: r.active
+  };
+}
+async function generateDueRecurring(req) {
+  const user = getAuthUser(req);
+  if (!user) return;
+  const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  const due = await prisma.recurringEntry.findMany({
+    where: { active: true, nextDate: { lte: new Date(today) }, clientDossier: dossierScopeWhere(req) },
+    include: { clientDossier: { select: { lockedUntil: true } } }
+  });
+  if (!due.length) return;
+  const author = await actorName(req);
+  for (const r of due) {
+    let date = r.nextDate.toISOString().slice(0, 10);
+    const lines = r.lines;
+    for (let i = 0; i < 24 && date <= today; i++, date = nextMonthly(date, r.day)) {
+      if (lockError(r.clientDossier, date)) continue;
+      await withNumberRetry(() => prisma.$transaction(async (tx) => {
+        const number = await numberer(tx, r.clientDossierId)(r.journal);
+        await tx.journalEntry.create({
+          data: {
+            date: new Date(date),
+            label: r.label,
+            pieceRef: defaultPieceRef(r.journal, number),
+            journal: r.journal,
+            number,
+            amount: totalDebit(lines),
+            lines: linesCreate(lines),
+            clientDossierId: r.clientDossierId,
+            status: "validated",
+            validatedById: user.sub,
+            validatedAt: /* @__PURE__ */ new Date(),
+            createdById: r.createdById,
+            rawInput: r.label,
+            inputType: "manual",
+            paymentMethod: r.paymentMethod,
+            explanationSimplified: `\xC9criture r\xE9currente du ${date.split("-").reverse().join("/")}.`,
+            auditTrail: { create: { action: "auto_validated", author, notes: "G\xE9n\xE9r\xE9e par une \xE9criture r\xE9currente." } }
+          }
+        });
+      }));
+    }
+    await prisma.recurringEntry.update({ where: { id: r.id }, data: { nextDate: new Date(date) } });
+  }
+}
+router2.post("/recurring", handler(async (req, res) => {
+  const b = req.body ?? {};
+  const dossierId = identifier(b.clientDossierId);
+  const dossier = dossierId ? await findAccessibleDossier(req, dossierId) : null;
+  if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
+  const label = optionalText(b.label, 300);
+  const startDate = isoDate(b.startDate);
+  const lines = (Array.isArray(b.lines) ? b.lines : []).slice(0, 50).map((l) => ({
+    accountCode: String(l?.accountCode ?? "").trim().slice(0, 20),
+    debit: Math.round((Number(l?.debit) || 0) * 100) / 100,
+    credit: Math.round((Number(l?.credit) || 0) * 100) / 100,
+    label: optionalText(l?.label, 300) ?? void 0
+  }));
+  if (!label) return res.status(400).json({ error: "Libell\xE9 requis." });
+  if (!startDate) return res.status(400).json({ error: "Date de premi\xE8re \xE9ch\xE9ance invalide." });
+  const err = linesError(lines) ?? await assertAccountsUsable(lines.map((l) => l.accountCode), dossier.id);
+  if (err) return res.status(400).json({ error: err });
+  const row = await prisma.recurringEntry.create({
+    data: {
+      clientDossierId: dossier.id,
+      label,
+      lines,
+      journal: JOURNAL_CODES.find((j) => j === b.journal) ?? defaultJournal(lines),
+      paymentMethod: PAYMENT_METHODS.find((m) => m === b.paymentMethod) ?? "bank_transfer",
+      day: Number(startDate.slice(8, 10)),
+      nextDate: new Date(startDate),
+      createdById: getAuthUser(req).sub
+    }
+  });
+  res.status(201).json(serializeRecurring(row));
+}));
+router2.post("/recurring/:id/stop", handler(async (req, res) => {
+  const id = identifier(req.params.id);
+  const row = id ? await prisma.recurringEntry.findUnique({ where: { id } }) : null;
+  if (!row || !await findAccessibleDossier(req, row.clientDossierId)) return res.status(404).json({ error: "\xC9criture r\xE9currente introuvable." });
+  const updated = await prisma.recurringEntry.update({ where: { id: row.id }, data: { active: false } });
+  res.json(serializeRecurring(updated));
+}));
+var recurring_default = router2;
+
+// server/routes/dossiers.ts
+init_db();
+init_mappers();
+import { Router as Router3 } from "express";
+init_seedData();
+var router3 = Router3();
+var dossierData = (d) => ({
+  name: d.name,
+  managerName: d.managerName,
+  phone: d.phone,
+  activity: d.activity,
+  city: d.city,
+  country: d.country,
+  rccm: d.rccm,
+  ifu: d.ifu,
+  regimeFiscal: REGIME_FISCAL_TO_DB[d.regimeFiscal],
+  currency: d.currency
+});
+var mainOnly = (res) => res.status(403).json({ error: "R\xE9serv\xE9 au compte principal de l'entreprise." });
+router3.get("/dossiers", handler(async (req, res) => {
+  const rows = await prisma.clientDossier.findMany({
+    where: dossierScopeWhere(req),
+    include: DOSSIER_INCLUDE,
+    orderBy: [{ isMain: "desc" }, { createdAt: "asc" }]
+  });
+  res.json(rows.map(serializeDossier));
+}));
+router3.get("/dossiers/:id", handler(async (req, res) => {
+  const id = identifier(req.params.id);
+  if (!id) return res.status(400).json({ error: "Identifiant de dossier invalide." });
+  const dossier = await findAccessibleDossier(req, id);
+  if (!dossier) {
+    const sameOrg = await prisma.clientDossier.findFirst({ where: { id, organizationId: getAuthUser(req)?.organizationId ?? "" }, select: { id: true } });
+    return sameOrg ? res.status(403).json({ error: NO_ACCESS }) : res.status(404).json({ error: "Dossier introuvable." });
+  }
+  const [full, entryRows] = await Promise.all([
+    prisma.clientDossier.findUnique({ where: { id }, include: DOSSIER_INCLUDE }),
+    prisma.journalEntry.findMany({ where: { clientDossierId: id }, include: ENTRY_INCLUDE, orderBy: { date: "desc" } })
+  ]);
+  res.json({ dossier: serializeDossier(full), entries: entryRows });
+}));
+router3.post("/company", handler(async (req, res) => {
+  if (!isMainAccount(req)) return mainOnly(res);
+  const organizationId = getAuthUser(req).organizationId;
+  if (await prisma.clientDossier.findFirst({ where: { organizationId, isMain: true } })) {
+    return res.status(409).json({ error: "Les informations de l'entreprise sont d\xE9j\xE0 enregistr\xE9es." });
+  }
+  const d = unwrap(validateDossierInput(req.body));
+  const created = await prisma.$transaction(async (tx) => {
+    const row = await tx.clientDossier.create({ data: { ...dossierData(d), organizationId, isMain: true } });
+    await createDefaultPlatformSettings(tx, row.id);
+    await tx.organization.update({ where: { id: organizationId }, data: { name: d.name } });
+    return tx.clientDossier.findUniqueOrThrow({ where: { id: row.id }, include: DOSSIER_INCLUDE });
+  });
+  res.status(201).json(serializeDossier(created));
+}));
+router3.post("/dossiers", handler(async (req, res) => {
+  if (!isMainAccount(req)) return mainOnly(res);
+  const organizationId = getAuthUser(req).organizationId;
+  const { name, ownerName } = req.body ?? {};
+  const cleanName = typeof name === "string" ? name.trim().slice(0, 160) : "";
+  const cleanOwner = typeof ownerName === "string" ? ownerName.trim().slice(0, 120) : "";
+  if (!cleanName) return res.status(400).json({ error: "Nom du dossier requis." });
+  const main = await prisma.clientDossier.findFirst({ where: { organizationId, isMain: true }, include: { settings: true } });
+  if (!main) return res.status(400).json({ error: "Renseignez d'abord les informations de l'entreprise." });
+  const created = await prisma.$transaction(async (tx) => {
+    const { id: _id, isMain: _m, createdAt: _c, updatedAt: _u, lockedUntil: _l, settings, ...fiscal } = main;
+    const row = await tx.clientDossier.create({ data: { ...fiscal, name: cleanName, ownerName: cleanOwner || null, isMain: false } });
+    if (settings) await tx.platformSettings.create({ data: { ...copySettings(settings), dossierId: row.id } });
+    else await createDefaultPlatformSettings(tx, row.id);
+    return tx.clientDossier.findUniqueOrThrow({ where: { id: row.id }, include: DOSSIER_INCLUDE });
+  });
+  res.status(201).json(serializeDossier(created));
+}));
+router3.post("/dossiers/:id/update", handler(async (req, res) => {
+  const id = identifier(req.params.id);
+  if (!id) return res.status(400).json({ error: "Identifiant de dossier invalide." });
+  const existing = await findAccessibleDossier(req, id);
+  if (!existing) return res.status(404).json({ error: "Dossier introuvable." });
+  const d = unwrap(validateDossierInput(req.body));
+  const updated = await prisma.clientDossier.update({ where: { id }, data: dossierData(d), include: DOSSIER_INCLUDE });
+  if (existing.isMain) await prisma.organization.update({ where: { id: existing.organizationId }, data: { name: d.name } });
+  res.json(serializeDossier(updated));
+}));
+router3.post("/dossiers/:id/lock", handler(async (req, res) => {
+  const id = identifier(req.params.id);
+  const dossier = id ? await findAccessibleDossier(req, id) : null;
+  if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
+  const raw = (req.body ?? {}).until;
+  const until = raw === null ? null : isoDate(raw);
+  if (raw !== null && !until) return res.status(400).json({ error: "Date de blocage invalide." });
+  const current = dossier.lockedUntil?.toISOString().slice(0, 10) ?? null;
+  const backwards = current && (!until || until < current);
+  if (backwards && !isMainAccount(req)) {
+    return res.status(403).json({ error: "D\xE9bloquer une p\xE9riode est r\xE9serv\xE9 au compte principal de l'entreprise." });
+  }
+  if (until && !backwards) {
+    const open = await prisma.journalEntry.count({
+      where: { clientDossierId: dossier.id, date: { lte: new Date(until) }, status: { in: ["draft", "pending_review", "anomaly"] } }
+    });
+    if (open) {
+      return res.status(409).json({ error: `${open} \xE9criture(s) de la p\xE9riode ne sont pas valid\xE9es : validez-les ou annulez-les avant de bloquer.` });
+    }
+  }
+  const updated = await prisma.clientDossier.update({
+    where: { id: dossier.id },
+    data: { lockedUntil: until ? new Date(until) : null },
+    include: DOSSIER_INCLUDE
+  });
+  res.json(serializeDossier(updated));
+}));
+router3.post("/dossiers/:id/delete", handler(async (req, res) => {
+  const id = identifier(req.params.id);
+  if (!id) return res.status(400).json({ error: "Identifiant de dossier invalide." });
+  const existing = await findAccessibleDossier(req, id);
+  if (!existing) return res.status(404).json({ error: "Dossier introuvable." });
+  if (!isMainAccount(req)) return mainOnly(res);
+  if (existing.isMain) return res.status(400).json({ error: "La comptabilit\xE9 de l'entreprise ne peut pas \xEAtre supprim\xE9e." });
+  await prisma.clientDossier.delete({ where: { id } });
+  res.status(204).end();
+}));
+var dossiers_default = router3;
 
 // server/routes/notifications.ts
 init_db();
 init_mappers();
-import { Router as Router3 } from "express";
-var router3 = Router3();
-router3.post("/notifications", handler(async (req, res) => {
+import { Router as Router4 } from "express";
+var router4 = Router4();
+router4.post("/notifications", handler(async (req, res) => {
   const n = unwrap(validateNotificationInput(req.body));
   if (n.dossierId) {
     const dossier = await findAccessibleDossier(req, n.dossierId);
@@ -1153,11 +1521,11 @@ router3.post("/notifications", handler(async (req, res) => {
   });
   res.status(201).json(serializeNotification(created));
 }));
-router3.post("/notifications/read-all", handler(async (req, res) => {
+router4.post("/notifications/read-all", handler(async (req, res) => {
   await prisma.appNotification.updateMany({ where: notificationScopeWhere(req), data: { read: true } });
   res.status(204).end();
 }));
-router3.post("/notifications/:id/read", handler(async (req, res) => {
+router4.post("/notifications/:id/read", handler(async (req, res) => {
   const id = identifier(req.params.id);
   if (!id) return res.status(400).json({ error: "Identifiant de notification invalide." });
   const scoped = await prisma.appNotification.findFirst({ where: { id, ...notificationScopeWhere(req) } });
@@ -1165,7 +1533,7 @@ router3.post("/notifications/:id/read", handler(async (req, res) => {
   const updated = await prisma.appNotification.update({ where: { id }, data: { read: true } });
   res.json(serializeNotification(updated));
 }));
-router3.post("/notifications/:id/delete", handler(async (req, res) => {
+router4.post("/notifications/:id/delete", handler(async (req, res) => {
   const id = identifier(req.params.id);
   if (!id) return res.status(400).json({ error: "Identifiant de notification invalide." });
   const scoped = await prisma.appNotification.findFirst({ where: { id, ...notificationScopeWhere(req) } });
@@ -1173,26 +1541,26 @@ router3.post("/notifications/:id/delete", handler(async (req, res) => {
   await prisma.appNotification.delete({ where: { id } });
   res.status(204).end();
 }));
-router3.post("/notifications/clear", handler(async (req, res) => {
+router4.post("/notifications/clear", handler(async (req, res) => {
   await prisma.appNotification.deleteMany({ where: notificationScopeWhere(req) });
   res.status(204).end();
 }));
-var notifications_default = router3;
+var notifications_default = router4;
 
 // server/routes/settings.ts
 init_db();
 init_mappers();
 init_seedData();
-import { Router as Router4 } from "express";
-var router4 = Router4();
-router4.get("/settings", handler(async (req, res) => {
+import { Router as Router5 } from "express";
+var router5 = Router5();
+router5.get("/settings", handler(async (req, res) => {
   const dossierId = identifier(req.query.dossierId);
   const dossier = dossierId ? await findAccessibleDossier(req, dossierId) : null;
   if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
   const row = await prisma.platformSettings.findUnique({ where: { dossierId: dossier.id } }) ?? await createDefaultPlatformSettings(prisma, dossier.id);
   res.json(serializePlatformSettings(row));
 }));
-router4.post("/settings/update", handler(async (req, res) => {
+router5.post("/settings/update", handler(async (req, res) => {
   const dossierId = identifier((req.body ?? {}).dossierId);
   const dossier = dossierId ? await findAccessibleDossier(req, dossierId) : null;
   if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
@@ -1203,19 +1571,19 @@ router4.post("/settings/update", handler(async (req, res) => {
   const saved = await prisma.platformSettings.findUniqueOrThrow({ where: { dossierId: dossier.id } });
   res.json({ settings: serializePlatformSettings(saved), propagated });
 }));
-var settings_default = router4;
+var settings_default = router5;
 
 // server/routes/backup.ts
 init_db();
-import { Router as Router5 } from "express";
+import { Router as Router6 } from "express";
 import { randomUUID } from "node:crypto";
-var router5 = Router5();
+var router6 = Router6();
 var optionalId = (v) => identifier(v) ?? null;
 var optionalDate = (v) => {
   const d = typeof v === "string" ? new Date(v) : null;
   return d && !Number.isNaN(d.getTime()) ? d : null;
 };
-router5.post("/import-backup", handler(async (req, res) => {
+router6.post("/import-backup", handler(async (req, res) => {
   const user = getAuthUser(req);
   if (!user) return res.status(401).json({ error: "Authentification requise." });
   const body = req.body ?? {};
@@ -1247,6 +1615,7 @@ router5.post("/import-backup", handler(async (req, res) => {
   const errors = [];
   const usedIds = /* @__PURE__ */ new Set();
   const entryRows = [];
+  const lineRows = [];
   const auditRows = [];
   entries.forEach((raw, i) => {
     const dossierId = identifier(raw?.clientDossierId);
@@ -1255,7 +1624,7 @@ router5.post("/import-backup", handler(async (req, res) => {
     const parsed = validateEntryInput(raw, { trusted: true });
     if (!parsed.ok) return void errors.push(`${where} : ${parsed.error}`);
     const e = parsed.data;
-    const unknown = [e.debitAccountCode, e.creditAccountCode].filter((c) => !accountOk(c, dossierId));
+    const unknown = [...new Set(e.lines.map((l) => l.accountCode))].filter((c) => !accountOk(c, dossierId));
     if (unknown.length) return void errors.push(`${where} : compte inconnu ${unknown.join(", ")}`);
     let id = identifier(raw?.id);
     if (!id || usedIds.has(id)) id = randomUUID();
@@ -1266,10 +1635,10 @@ router5.post("/import-backup", handler(async (req, res) => {
       date: new Date(e.date),
       label: e.label,
       pieceRef: e.pieceRef,
-      debitAccountCode: e.debitAccountCode,
-      creditAccountCode: e.creditAccountCode,
+      journal: e.journal,
+      number: Number(raw?.number) || 0,
+      // renuméroté ci-dessous
       amount: e.amount,
-      tvaAmount: e.tvaAmount,
       clientDossierId: dossierId,
       status: e.status,
       detectedAnomaly: e.detectedAnomaly,
@@ -1281,8 +1650,10 @@ router5.post("/import-backup", handler(async (req, res) => {
       updatedById: optionalId(raw?.updatedById),
       validatedById: optionalId(raw?.validatedById),
       validatedAt: optionalDate(raw?.validatedAt),
-      invoiceId: invoiceId && invoiceDossier.get(invoiceId) === dossierId ? invoiceId : null
+      invoiceId: invoiceId && invoiceDossier.get(invoiceId) === dossierId ? invoiceId : null,
+      reversalOfId: optionalId(raw?.reversalOfId)
     });
+    e.lines.forEach((l, position) => lineRows.push({ entryId: id, position, accountCode: l.accountCode, label: l.label, debit: l.debit, credit: l.credit }));
     for (const a of e.auditTrail) {
       auditRows.push({
         id: a.id,
@@ -1295,6 +1666,22 @@ router5.post("/import-backup", handler(async (req, res) => {
       });
     }
   });
+  const used = /* @__PURE__ */ new Map();
+  const keyOf = (row) => `${row.clientDossierId}|${row.journal}`;
+  const missing = [];
+  for (const row of entryRows) {
+    const set = used.get(keyOf(row)) ?? /* @__PURE__ */ new Set();
+    used.set(keyOf(row), set);
+    if (Number.isInteger(row.number) && row.number > 0 && !set.has(row.number)) set.add(row.number);
+    else missing.push(row);
+  }
+  for (const row of missing.sort((a, b) => +new Date(a.date) - +new Date(b.date))) {
+    const set = used.get(keyOf(row));
+    row.number = Math.max(0, ...set) + 1;
+    set.add(row.number);
+    if (!row.pieceRef) row.pieceRef = defaultPieceRef(row.journal, row.number);
+  }
+  for (const row of entryRows) if (row.reversalOfId && !usedIds.has(row.reversalOfId)) row.reversalOfId = null;
   if (errors.length) {
     return res.status(400).json({
       error: `Sauvegarde non restaur\xE9e, rien n'a \xE9t\xE9 modifi\xE9. ${errors.length} \xE9criture(s) refus\xE9e(s) : ${errors.slice(0, 3).join(" ; ")}${errors.length > 3 ? "\u2026" : ""}`
@@ -1305,21 +1692,25 @@ router5.post("/import-backup", handler(async (req, res) => {
     await tx.appNotification.deleteMany({ where: { dossierId: { in: dossierIds } } });
     await tx.journalEntry.deleteMany({ where: { clientDossierId: { in: dossierIds } } });
     for (const [id, data] of restorable) await tx.clientDossier.update({ where: { id }, data: dossierData(data) });
-    await tx.journalEntry.createMany({ data: entryRows });
+    await tx.journalEntry.createMany({ data: entryRows.map((r) => ({ ...r, reversalOfId: null })) });
+    for (const r of entryRows.filter((r2) => r2.reversalOfId)) {
+      await tx.journalEntry.update({ where: { id: r.id }, data: { reversalOfId: r.reversalOfId } });
+    }
+    await tx.journalLine.createMany({ data: lineRows });
     await tx.auditLog.createMany({ data: auditRows, skipDuplicates: true });
     const kept = payments.filter((p) => usedIds.has(p.entryId));
     if (kept.length) await tx.invoicePayment.createMany({ data: kept });
   }, { timeout: 12e4, maxWait: 1e4 });
   res.json(await buildBootstrapPayload(req));
 }));
-var backup_default = router5;
+var backup_default = router6;
 
 // server/routes/accounts.ts
 init_db();
 init_mappers();
-import { Router as Router6 } from "express";
-var router6 = Router6();
-router6.post("/accounts", handler(async (req, res) => {
+import { Router as Router7 } from "express";
+var router7 = Router7();
+router7.post("/accounts", handler(async (req, res) => {
   const a = unwrap(validateAccountInput(req.body));
   const dossier = await findAccessibleDossier(req, a.dossierId);
   if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
@@ -1345,7 +1736,7 @@ router6.post("/accounts", handler(async (req, res) => {
   });
   res.status(201).json(serializeAccount(row));
 }));
-router6.post("/accounts/:code/update", handler(async (req, res) => {
+router7.post("/accounts/:code/update", handler(async (req, res) => {
   const code = identifier(req.params.code);
   const row = code ? await prisma.syscohadaAccount.findUnique({ where: { code } }) : null;
   if (!row || !row.dossierId || !await findAccessibleDossier(req, row.dossierId)) {
@@ -1358,12 +1749,12 @@ router6.post("/accounts/:code/update", handler(async (req, res) => {
   const updated = await prisma.syscohadaAccount.update({ where: { code: row.code }, data });
   res.json(serializeAccount(updated));
 }));
-var accounts_default = router6;
+var accounts_default = router7;
 
 // server/routes/invoices.ts
 init_db();
 init_mappers();
-import { Router as Router7 } from "express";
+import { Router as Router8 } from "express";
 
 // src/utils/invoices.ts
 function computeInvoiceTotals(lines, vatRate) {
@@ -1372,15 +1763,28 @@ function computeInvoiceTotals(lines, vatRate) {
   const totalTVA = Math.round(totalHT * vatRate / 100);
   return { amounts, totalHT, totalTVA, totalTTC: totalHT + totalTVA };
 }
+var KIND_LABEL = { sale: "Facture", credit_note: "Avoir", purchase: "Facture fournisseur" };
+var KIND_PREFIX = { sale: "FAC", credit_note: "AV", purchase: "FF" };
+var isSupplierSide = (kind) => kind === "purchase";
+var line = (accountCode, debit, credit) => ({ accountCode, debit, credit });
 function invoicePostings(inv, treasuryCode) {
-  const sale = [
-    { debit: inv.customerAccountCode, credit: inv.salesAccountCode, amount: inv.totalHT, label: `Facture ${inv.number} \u2014 ${inv.customerName} (HT)` }
-  ];
-  if (inv.totalTVA > 0) {
-    sale.push({ debit: inv.customerAccountCode, credit: "4431", amount: inv.totalTVA, label: `Facture ${inv.number} \u2014 TVA collect\xE9e` });
-  }
-  const payment = inv.mode === "cash" && treasuryCode ? { debit: treasuryCode, credit: inv.customerAccountCode, amount: inv.totalTTC, label: `R\xE8glement comptant facture ${inv.number}` } : void 0;
+  const kind = inv.kind ?? "sale";
+  const tiers = inv.customerAccountCode, nature = inv.salesAccountCode;
+  const tva = inv.totalTVA > 0;
+  const lines = kind === "sale" ? [line(tiers, inv.totalTTC, 0), line(nature, 0, inv.totalHT), ...tva ? [line(TVA_COLLECTED, 0, inv.totalTVA)] : []] : kind === "credit_note" ? [line(nature, inv.totalHT, 0), ...tva ? [line(TVA_COLLECTED, inv.totalTVA, 0)] : [], line(tiers, 0, inv.totalTTC)] : [line(nature, inv.totalHT, 0), ...tva ? [line(TVA_DEDUCTIBLE, inv.totalTVA, 0)] : [], line(tiers, 0, inv.totalTTC)];
+  const ref = kind === "purchase" && inv.externalRef ? `${inv.number} (${inv.externalRef})` : inv.number;
+  const sale = {
+    label: `${KIND_LABEL[kind]} ${ref} \u2014 ${inv.customerName}`,
+    journal: kind === "purchase" ? "AC" : "VT",
+    amount: inv.totalTTC,
+    lines
+  };
+  const payLines = inv.mode === "cash" && treasuryCode && kind !== "credit_note" ? kind === "purchase" ? [line(tiers, inv.totalTTC, 0), line(treasuryCode, 0, inv.totalTTC)] : [line(treasuryCode, inv.totalTTC, 0), line(tiers, 0, inv.totalTTC)] : void 0;
+  const payment = payLines ? { label: `R\xE8glement comptant ${KIND_LABEL[kind].toLowerCase()} ${ref}`, journal: defaultJournal(payLines), amount: inv.totalTTC, lines: payLines } : void 0;
   return { sale, payment };
+}
+function settlementAmount(e, kind) {
+  return isSupplierSide(kind) ? e.lines.filter((l) => l.accountCode.startsWith("40")).reduce((s, l) => s + l.debit, 0) : e.lines.filter((l) => l.accountCode.startsWith("411")).reduce((s, l) => s + l.credit, 0);
 }
 function paidAmount(inv) {
   return inv.payments.reduce((s, p) => s + p.amount, 0);
@@ -1468,8 +1872,13 @@ function detectPaymentMethod(text2) {
 }
 
 // server/routes/invoices.ts
-var router7 = Router7();
+var router8 = Router8();
 var INVOICE_INCLUDE = { lines: true, payments: true };
+async function relatedInvoices(originalInvoiceId) {
+  if (!originalInvoiceId) return [];
+  const row = await prisma.invoice.findUnique({ where: { id: originalInvoiceId }, include: INVOICE_INCLUDE });
+  return row ? [serializeInvoice(row)] : [];
+}
 async function findAccessibleInvoice(req, id) {
   if (!id) return null;
   const inv = await prisma.invoice.findUnique({ where: { id }, include: INVOICE_INCLUDE });
@@ -1479,6 +1888,9 @@ async function findAccessibleInvoice(req, id) {
 function invoiceData(d) {
   const totals = computeInvoiceTotals(d.lines, d.vatRate);
   return {
+    kind: d.kind,
+    externalRef: d.externalRef,
+    originalInvoiceId: d.originalInvoiceId,
     date: new Date(d.date),
     dueDate: new Date(d.dueDate),
     mode: d.mode,
@@ -1501,8 +1913,8 @@ function invoiceData(d) {
     }
   };
 }
-async function nextNumber(dossierId, date) {
-  const prefix = `FAC-${date.slice(0, 4)}-`;
+async function nextNumber(dossierId, date, kind) {
+  const prefix = `${KIND_PREFIX[kind]}-${date.slice(0, 4)}-`;
   const last = await prisma.invoice.findFirst({
     where: { clientDossierId: dossierId, number: { startsWith: prefix } },
     orderBy: { number: "desc" },
@@ -1512,16 +1924,25 @@ async function nextNumber(dossierId, date) {
   return `${prefix}${String(n).padStart(4, "0")}`;
 }
 async function checkAccounts(d, dossierId) {
-  const codes = [d.customerAccountCode, d.salesAccountCode, "4431"];
+  const codes = [d.customerAccountCode, d.salesAccountCode, d.kind === "purchase" ? "4452" : "4431"];
   if (d.mode === "cash" && d.paymentMethod) codes.push(treasuryAccountFor(d.paymentMethod).code);
   return assertAccountsUsable(codes, dossierId);
 }
-router7.post("/invoices", handler(async (req, res) => {
+async function creditNoteError(d, dossierId, selfId) {
+  if (d.kind !== "credit_note") return null;
+  const orig = d.originalInvoiceId ? await prisma.invoice.findUnique({ where: { id: d.originalInvoiceId }, include: { creditNotes: true } }) : null;
+  if (!orig || orig.clientDossierId !== dossierId || orig.kind !== "sale") return "Facture d'origine introuvable dans ce dossier.";
+  if (orig.status !== "validated") return "La facture d'origine doit \xEAtre valid\xE9e.";
+  const already = orig.creditNotes.filter((c) => c.id !== selfId && c.status !== "cancelled").reduce((s, c) => s + Number(c.totalTTC), 0);
+  const max = Number(orig.totalTTC) - already;
+  return d.totalTTC > max + 1e-3 ? `L'avoir d\xE9passe le montant restant \xE0 cr\xE9diter sur ${orig.number} (${max.toLocaleString("fr-FR")}).` : null;
+}
+router8.post("/invoices", handler(async (req, res) => {
   const dossierId = identifier((req.body ?? {}).clientDossierId);
   const dossier = dossierId ? await findAccessibleDossier(req, dossierId) : null;
   if (!dossier) return res.status(404).json({ error: "Dossier introuvable." });
   const d = unwrap(validateInvoiceInput(req.body));
-  const accountError = await checkAccounts(d, dossier.id);
+  const accountError = await checkAccounts(d, dossier.id) ?? await creditNoteError({ ...d, totalTTC: computeInvoiceTotals(d.lines, d.vatRate).totalTTC }, dossier.id);
   if (accountError) return res.status(400).json({ error: accountError });
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -1529,7 +1950,7 @@ router7.post("/invoices", handler(async (req, res) => {
         data: {
           ...invoiceData(d),
           clientDossierId: dossier.id,
-          number: await nextNumber(dossier.id, d.date),
+          number: await nextNumber(dossier.id, d.date, d.kind),
           status: req.body?.submit === true ? "pending_review" : "draft",
           createdById: getAuthUser(req).sub
         },
@@ -1541,14 +1962,14 @@ router7.post("/invoices", handler(async (req, res) => {
     }
   }
 }));
-router7.post("/invoices/:id/update", handler(async (req, res) => {
+router8.post("/invoices/:id/update", handler(async (req, res) => {
   const inv = await findAccessibleInvoice(req, identifier(req.params.id));
   if (!inv) return res.status(404).json({ error: "Facture introuvable." });
   if (inv.status !== "draft" && inv.status !== "pending_review") {
     return res.status(409).json({ error: "Facture valid\xE9e ou annul\xE9e : modification impossible." });
   }
-  const d = unwrap(validateInvoiceInput(req.body));
-  const accountError = await checkAccounts(d, inv.clientDossierId);
+  const d = unwrap(validateInvoiceInput({ ...req.body, kind: inv.kind, originalInvoiceId: inv.originalInvoiceId }));
+  const accountError = await checkAccounts(d, inv.clientDossierId) ?? await creditNoteError({ ...d, totalTTC: computeInvoiceTotals(d.lines, d.vatRate).totalTTC }, inv.clientDossierId, inv.id);
   if (accountError) return res.status(400).json({ error: accountError });
   const [, row] = await prisma.$transaction([
     prisma.invoiceLine.deleteMany({ where: { invoiceId: inv.id } }),
@@ -1560,18 +1981,21 @@ router7.post("/invoices/:id/update", handler(async (req, res) => {
   ]);
   res.json(serializeInvoice(row));
 }));
-router7.post("/invoices/:id/submit", handler(async (req, res) => {
+router8.post("/invoices/:id/submit", handler(async (req, res) => {
   const inv = await findAccessibleInvoice(req, identifier(req.params.id));
   if (!inv) return res.status(404).json({ error: "Facture introuvable." });
   if (inv.status !== "draft") return res.status(409).json({ error: "Seul un brouillon peut \xEAtre soumis." });
   const row = await prisma.invoice.update({ where: { id: inv.id }, data: { status: "pending_review" }, include: INVOICE_INCLUDE });
   res.json(serializeInvoice(row));
 }));
-router7.post("/invoices/:id/validate", handler(async (req, res) => {
+router8.post("/invoices/:id/validate", handler(async (req, res) => {
   const user = getAuthUser(req);
   const inv = await findAccessibleInvoice(req, identifier(req.params.id));
   if (!inv) return res.status(404).json({ error: "Facture introuvable." });
   if (!["draft", "pending_review"].includes(inv.status)) return res.status(409).json({ error: "Cette facture ne peut plus \xEAtre valid\xE9e." });
+  const dossier = await prisma.clientDossier.findUniqueOrThrow({ where: { id: inv.clientDossierId } });
+  const locked = lockError(dossier, inv.date) ?? await creditNoteError({ kind: inv.kind, originalInvoiceId: inv.originalInvoiceId, totalTTC: Number(inv.totalTTC) }, inv.clientDossierId, inv.id);
+  if (locked) return res.status(409).json({ error: locked });
   const author = await actorName(req);
   const invoice = serializeInvoice(inv);
   const treasury = invoice.paymentMethod ? treasuryAccountFor(invoice.paymentMethod).code : void 0;
@@ -1580,11 +2004,9 @@ router7.post("/invoices/:id/validate", handler(async (req, res) => {
   const base = {
     date: inv.date,
     pieceRef: inv.number,
-    tvaAmount: 0,
-    // la TVA est portée par sa propre écriture sur le 4431
     clientDossierId: inv.clientDossierId,
     status: "validated",
-    rawInput: `Facture ${inv.number}`,
+    rawInput: `${KIND_LABEL[inv.kind]} ${inv.number}`,
     inputType: "manual",
     paymentMethod: inv.paymentMethod ?? "bank_transfer",
     createdById: inv.createdById,
@@ -1592,43 +2014,56 @@ router7.post("/invoices/:id/validate", handler(async (req, res) => {
     validatedAt: now,
     invoiceId: inv.id
   };
-  const entryData = (p) => ({
+  const entryData = (p, number) => ({
     ...base,
     label: p.label,
-    debitAccountCode: p.debit,
-    creditAccountCode: p.credit,
+    journal: p.journal,
+    number,
     amount: p.amount,
-    explanationSimplified: `${p.label} : ${p.amount.toLocaleString("fr-FR")} (d\xE9bit ${p.debit} / cr\xE9dit ${p.credit}).`,
-    auditTrail: { create: { action: "validated_by_expert", author, notes: `G\xE9n\xE9r\xE9e \xE0 la validation de la facture ${inv.number}.` } }
+    lines: linesCreate(p.lines),
+    explanationSimplified: `${p.label} : ${p.amount.toLocaleString("fr-FR")}.`,
+    auditTrail: { create: { action: "validated_by_expert", author, notes: `G\xE9n\xE9r\xE9e \xE0 la validation de ${KIND_LABEL[inv.kind].toLowerCase()} ${inv.number}.` } }
   });
-  const created = await prisma.$transaction(async (tx) => {
-    const ids = [];
-    for (const p of sale) {
-      ids.push((await tx.journalEntry.create({ data: entryData(p) })).id);
+  const created = await withNumberRetry(() => prisma.$transaction(async (tx) => {
+    const next = numberer(tx, inv.clientDossierId);
+    const saleEntry = await tx.journalEntry.create({ data: entryData(sale, await next(sale.journal)) });
+    const ids = [saleEntry.id];
+    if (inv.kind === "credit_note" && inv.originalInvoiceId) {
+      const orig = await tx.invoice.findUniqueOrThrow({ where: { id: inv.originalInvoiceId }, include: { payments: true } });
+      const due = Number(orig.totalTTC) - orig.payments.reduce((s, p) => s + Number(p.amount), 0);
+      const amount = Math.min(due, Number(inv.totalTTC));
+      if (amount > 0) await tx.invoicePayment.create({ data: { invoiceId: orig.id, entryId: saleEntry.id, amount, createdById: user.sub } });
     }
     if (payment) {
-      const pay = await tx.journalEntry.create({ data: entryData(payment) });
+      const pay = await tx.journalEntry.create({ data: entryData(payment, await next(payment.journal)) });
       ids.push(pay.id);
       await tx.invoicePayment.create({ data: { invoiceId: inv.id, entryId: pay.id, amount: payment.amount, createdById: user.sub } });
     }
     await tx.invoice.update({ where: { id: inv.id }, data: { status: "validated", validatedById: user.sub, validatedAt: now } });
     return ids;
-  });
+  }));
   const [fresh, entries] = await Promise.all([
     prisma.invoice.findUniqueOrThrow({ where: { id: inv.id }, include: INVOICE_INCLUDE }),
     prisma.journalEntry.findMany({ where: { id: { in: created } }, include: ENTRY_INCLUDE })
   ]);
-  res.json({ invoice: serializeInvoice(fresh), entries: entries.map(serializeEntry) });
+  res.json({ invoice: serializeInvoice(fresh), entries: entries.map(serializeEntry), related: await relatedInvoices(inv.originalInvoiceId) });
 }));
-router7.post("/invoices/:id/cancel", handler(async (req, res) => {
+router8.post("/invoices/:id/cancel", handler(async (req, res) => {
   const inv = await findAccessibleInvoice(req, identifier(req.params.id));
   if (!inv) return res.status(404).json({ error: "Facture introuvable." });
   if (inv.status === "cancelled") return res.status(409).json({ error: "Facture d\xE9j\xE0 annul\xE9e." });
+  const activeCreditNotes = await prisma.invoice.count({ where: { originalInvoiceId: inv.id, status: { not: "cancelled" } } });
+  if (activeCreditNotes) return res.status(409).json({ error: "Cette facture a un avoir : annulez d\u2019abord l\u2019avoir." });
+  if (inv.status === "validated") {
+    const locked = lockError(await prisma.clientDossier.findUniqueOrThrow({ where: { id: inv.clientDossierId } }), inv.date);
+    if (locked) return res.status(409).json({ error: `${locked} \xC9tablissez plut\xF4t un avoir.` });
+  }
   const author = await actorName(req);
   const reason = optionalText((req.body ?? {}).reason, 300) ?? `Annulation de la facture ${inv.number}.`;
   const generated = await prisma.journalEntry.findMany({ where: { invoiceId: inv.id }, select: { id: true } });
   await prisma.$transaction([
-    prisma.invoicePayment.deleteMany({ where: { invoiceId: inv.id } }),
+    // Lettrages de la facture, et ceux de ses écritures (un avoir imputé sur sa facture d'origine).
+    prisma.invoicePayment.deleteMany({ where: { OR: [{ invoiceId: inv.id }, { entryId: { in: generated.map((e) => e.id) } }] } }),
     ...generated.map((e) => prisma.journalEntry.update({
       where: { id: e.id },
       data: { status: "cancelled", auditTrail: { create: { action: "cancelled", author, notes: reason } } }
@@ -1639,13 +2074,15 @@ router7.post("/invoices/:id/cancel", handler(async (req, res) => {
     prisma.invoice.findUniqueOrThrow({ where: { id: inv.id }, include: INVOICE_INCLUDE }),
     prisma.journalEntry.findMany({ where: { invoiceId: inv.id }, include: ENTRY_INCLUDE })
   ]);
-  res.json({ invoice: serializeInvoice(fresh), entries: entries.map(serializeEntry) });
+  res.json({ invoice: serializeInvoice(fresh), entries: entries.map(serializeEntry), related: await relatedInvoices(inv.originalInvoiceId) });
 }));
-router7.post("/invoices/:id/payments", handler(async (req, res) => {
+router8.post("/invoices/:id/payments", handler(async (req, res) => {
   const user = getAuthUser(req);
   const inv = await findAccessibleInvoice(req, identifier(req.params.id));
   if (!inv) return res.status(404).json({ error: "Facture introuvable." });
   if (inv.status !== "validated") return res.status(409).json({ error: "Seule une facture valid\xE9e peut \xEAtre lettr\xE9e." });
+  if (inv.kind === "credit_note") return res.status(409).json({ error: "Un avoir s'impute sur sa facture d'origine." });
+  const supplier = isSupplierSide(inv.kind);
   const remaining = Number(inv.totalTTC) - paidAmount(serializeInvoice(inv));
   const body = req.body ?? {};
   let entryId;
@@ -1660,17 +2097,21 @@ router7.post("/invoices/:id/payments", handler(async (req, res) => {
     const treasury = treasuryAccountFor(method).code;
     const accountError = await assertAccountsUsable([treasury, inv.customerAccountCode], inv.clientDossierId);
     if (accountError) return res.status(400).json({ error: accountError });
-    const label = `R\xE8glement facture ${inv.number} \u2014 ${inv.customerName}`;
+    const locked = lockError(await prisma.clientDossier.findUniqueOrThrow({ where: { id: inv.clientDossierId } }), date);
+    if (locked) return res.status(409).json({ error: locked });
+    const label = `${supplier ? "Paiement" : "R\xE8glement"} ${KIND_LABEL[inv.kind].toLowerCase()} ${inv.number} \u2014 ${inv.customerName}`;
     const author = await actorName(req);
-    const entry2 = await prisma.journalEntry.create({
+    const lines = supplier ? simpleLines(inv.customerAccountCode, treasury, amount) : simpleLines(treasury, inv.customerAccountCode, amount);
+    const journal = defaultJournal(lines);
+    const entry2 = await withNumberRetry(async () => prisma.journalEntry.create({
       data: {
         date: new Date(date),
         label,
         pieceRef: optionalText(np.pieceRef, 80) ?? `REG-${inv.number}`,
-        debitAccountCode: treasury,
-        creditAccountCode: inv.customerAccountCode,
+        journal,
+        number: await numberer(prisma, inv.clientDossierId)(journal),
+        lines: linesCreate(lines),
         amount,
-        tvaAmount: 0,
         clientDossierId: inv.clientDossierId,
         status: "validated",
         validatedById: user.sub,
@@ -1678,19 +2119,20 @@ router7.post("/invoices/:id/payments", handler(async (req, res) => {
         rawInput: label,
         inputType: "manual",
         paymentMethod: method,
-        explanationSimplified: `${label} : ${amount.toLocaleString("fr-FR")} encaiss\xE9s.`,
+        explanationSimplified: `${label} : ${amount.toLocaleString("fr-FR")} ${supplier ? "pay\xE9s" : "encaiss\xE9s"}.`,
         createdById: user.sub,
         auditTrail: { create: { action: "edited_by_expert", author, notes: `R\xE8glement saisi et lettr\xE9 sur ${inv.number}.` } }
       }
-    });
+    }));
     entryId = entry2.id;
   } else {
     const id = identifier(body.entryId);
-    const entry2 = id ? await prisma.journalEntry.findUnique({ where: { id }, include: { payments: true } }) : null;
+    const entry2 = id ? await prisma.journalEntry.findUnique({ where: { id }, include: { payments: true, lines: true } }) : null;
     if (!entry2 || entry2.clientDossierId !== inv.clientDossierId) return res.status(404).json({ error: "R\xE8glement introuvable dans ce dossier." });
     if (entry2.status === "cancelled") return res.status(409).json({ error: "R\xE8glement annul\xE9." });
-    if (!entry2.creditAccountCode.startsWith("411")) return res.status(400).json({ error: "Un r\xE8glement client doit cr\xE9diter un compte 411." });
-    const free = Number(entry2.amount) - entry2.payments.reduce((s, p) => s + Number(p.amount), 0);
+    const settled = settlementAmount({ lines: entry2.lines.map((l) => ({ accountCode: l.accountCode, debit: Number(l.debit), credit: Number(l.credit) })) }, inv.kind);
+    if (settled <= 0) return res.status(400).json({ error: supplier ? "Un paiement fournisseur doit d\xE9biter un compte 40x." : "Un r\xE8glement client doit cr\xE9diter un compte 411." });
+    const free = settled - entry2.payments.reduce((s, p) => s + Number(p.amount), 0);
     amount = positiveMoney(body.amount) ?? Math.min(free, remaining);
     if (amount <= 0 || amount > free + 1e-3) return res.status(400).json({ error: `Montant sup\xE9rieur au disponible du r\xE8glement (${free.toLocaleString("fr-FR")}).` });
     if (amount > remaining + 1e-3) return res.status(400).json({ error: `Montant sup\xE9rieur au reste d\xFB (${remaining.toLocaleString("fr-FR")}).` });
@@ -1703,7 +2145,21 @@ router7.post("/invoices/:id/payments", handler(async (req, res) => {
   ]);
   res.status(201).json({ invoice: serializeInvoice(fresh), entry: serializeEntry(entry) });
 }));
-router7.post("/invoice-payments/:id/delete", handler(async (req, res) => {
+router8.post("/invoices/:id/delete", handler(async (req, res) => {
+  const inv = await findAccessibleInvoice(req, identifier(req.params.id));
+  if (!inv) return res.status(404).json({ error: "Facture introuvable." });
+  if (inv.status !== "draft" && inv.status !== "pending_review") {
+    return res.status(409).json({ error: "Seul un brouillon jamais valid\xE9 se supprime ; une facture valid\xE9e s\u2019annule." });
+  }
+  if (inv.kind !== "purchase") {
+    const prefix = inv.number.slice(0, inv.number.lastIndexOf("-") + 1);
+    const last = await prisma.invoice.findFirst({ where: { clientDossierId: inv.clientDossierId, number: { startsWith: prefix } }, orderBy: { number: "desc" }, select: { id: true } });
+    if (last?.id !== inv.id) return res.status(409).json({ error: `${inv.number} n'est pas le dernier num\xE9ro : annulez-la pour garder une num\xE9rotation sans trou.` });
+  }
+  await prisma.invoice.delete({ where: { id: inv.id } });
+  res.status(204).end();
+}));
+router8.post("/invoice-payments/:id/delete", handler(async (req, res) => {
   const id = identifier(req.params.id);
   const p = id ? await prisma.invoicePayment.findUnique({ where: { id }, include: { entry: { select: { invoiceId: true } } } }) : null;
   const inv = p ? await findAccessibleInvoice(req, p.invoiceId) : null;
@@ -1713,27 +2169,28 @@ router7.post("/invoice-payments/:id/delete", handler(async (req, res) => {
   const fresh = await prisma.invoice.findUniqueOrThrow({ where: { id: inv.id }, include: INVOICE_INCLUDE });
   res.json(serializeInvoice(fresh));
 }));
-var invoices_default = router7;
+var invoices_default = router8;
 
 // server/routes/index.ts
-var router8 = Router8();
-router8.get("/bootstrap", handler(async (req, res) => {
+var router9 = Router9();
+router9.get("/bootstrap", handler(async (req, res) => {
   res.json(await buildBootstrapPayload(req));
 }));
-router8.use(dossiers_default);
-router8.use(entries_default);
-router8.use(notifications_default);
-router8.use(settings_default);
-router8.use(backup_default);
-router8.use(accounts_default);
-router8.use(invoices_default);
-var routes_default = router8;
+router9.use(dossiers_default);
+router9.use(entries_default);
+router9.use(notifications_default);
+router9.use(settings_default);
+router9.use(backup_default);
+router9.use(accounts_default);
+router9.use(invoices_default);
+router9.use(recurring_default);
+var routes_default = router9;
 
 // server/agentRoutes.ts
 init_db();
 init_mappers();
 init_initialSettings();
-import { Router as Router9 } from "express";
+import { Router as Router10 } from "express";
 
 // src/utils/analytics.ts
 init_syscohadaPlan();
@@ -1762,12 +2219,14 @@ function periodBounds(period, now = /* @__PURE__ */ new Date()) {
   return { from: "0000-01-01", to: "9999-12-31", label: "depuis le d\xE9but" };
 }
 var inRange = (e, from, to) => e.date >= from && e.date <= to;
-var net = (e) => e.amount - (e.tvaAmount || 0);
+var income = (e, ...p) => -prefixBalance(e, ...p);
+var charge = (e, ...p) => prefixBalance(e, ...p);
+var INCOME = ["7", "82", "84", "86", "88"];
+var CHARGE = ["6", "81", "83", "85", "87"];
 function computeBalances(entries) {
   const balances = {};
   for (const e of entries) {
-    balances[e.debitAccountCode] = (balances[e.debitAccountCode] ?? 0) + e.amount;
-    balances[e.creditAccountCode] = (balances[e.creditAccountCode] ?? 0) - e.amount;
+    for (const l of e.lines) balances[l.accountCode] = (balances[l.accountCode] ?? 0) + l.debit - l.credit;
   }
   return balances;
 }
@@ -1794,17 +2253,17 @@ function computeFlows(entries, from, to) {
   for (const e of entries) {
     if (!inRange(e, from, to)) continue;
     count++;
-    const dT = isTreasuryCode(e.debitAccountCode);
-    const cT = isTreasuryCode(e.creditAccountCode);
-    if (dT && !cT) cashIn += e.amount;
-    if (cT && !dT) cashOut += e.amount;
-    if (e.creditAccountCode.startsWith("7") || e.creditAccountCode.startsWith("82") || e.creditAccountCode.startsWith("85")) {
-      revenue += net(e);
-      rev[e.creditAccountCode] = (rev[e.creditAccountCode] ?? 0) + net(e);
-    }
-    if (e.debitAccountCode.startsWith("6")) {
-      expenses += net(e);
-      exp[e.debitAccountCode] = (exp[e.debitAccountCode] ?? 0) + net(e);
+    const t = prefixBalance(e, "5");
+    if (t > 0) cashIn += t;
+    if (t < 0) cashOut -= t;
+    for (const l of e.lines) {
+      if (INCOME.some((p) => l.accountCode.startsWith(p))) {
+        revenue += l.credit - l.debit;
+        rev[l.accountCode] = (rev[l.accountCode] ?? 0) + l.credit - l.debit;
+      } else if (CHARGE.some((p) => l.accountCode.startsWith(p))) {
+        expenses += l.debit - l.credit;
+        exp[l.accountCode] = (exp[l.accountCode] ?? 0) + l.debit - l.credit;
+      }
     }
   }
   const rank = (m) => Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([code, amount]) => ({ code, label: getAccountByCode(code)?.label ?? `Compte ${code}`, amount }));
@@ -1823,36 +2282,26 @@ function computeFlows(entries, from, to) {
 function computeReceivables(entries) {
   const b = computeBalances(entries);
   const total = Math.max(0, sumPrefix(b, "411"));
-  const open = entries.filter((e) => e.debitAccountCode.startsWith("411")).sort((a, c) => a.date < c.date ? 1 : -1).slice(0, 5).map((e) => ({ date: e.date, label: e.label, amount: e.amount }));
+  const open = entries.filter((e) => prefixBalance(e, "411") > 0).sort((a, c) => a.date < c.date ? 1 : -1).slice(0, 5).map((e) => ({ date: e.date, label: e.label, amount: prefixBalance(e, "411") }));
   return { total, open };
 }
 function computePayables(entries) {
   const b = computeBalances(entries);
   const total = Math.max(0, -sumPrefix(b, "401"));
-  const open = entries.filter((e) => e.creditAccountCode.startsWith("401")).sort((a, c) => a.date < c.date ? 1 : -1).slice(0, 5).map((e) => ({ date: e.date, label: e.label, amount: e.amount }));
+  const open = entries.filter((e) => prefixBalance(e, "401") < 0).sort((a, c) => a.date < c.date ? 1 : -1).slice(0, 5).map((e) => ({ date: e.date, label: e.label, amount: -prefixBalance(e, "401") }));
   return { total, open };
 }
 function computeTva(entries, month) {
   let totalSalesHT = 0, totalPurchasesHT = 0, tvaCollectee = 0, tvaDeductible = 0, entriesCount = 0;
   for (const e of entries) {
     if (e.status !== "validated" || !e.date.startsWith(month)) continue;
-    if (e.creditAccountCode.startsWith("443")) {
-      tvaCollectee += e.amount;
-      continue;
-    }
-    if (e.debitAccountCode.startsWith("445")) {
-      tvaDeductible += e.amount;
-      continue;
-    }
-    if (e.creditAccountCode.startsWith("7")) {
-      totalSalesHT += net(e);
-      tvaCollectee += e.tvaAmount || 0;
-      entriesCount++;
-    } else if (/^(6|2[1-4]|3)/.test(e.debitAccountCode) && !e.debitAccountCode.startsWith("64") && !e.debitAccountCode.startsWith("68")) {
-      totalPurchasesHT += net(e);
-      tvaDeductible += e.tvaAmount || 0;
-      entriesCount++;
-    }
+    const sales = income(e, "70");
+    const purchases = charge(e, "60", "61", "62", "63", "21", "22", "23", "24");
+    totalSalesHT += sales;
+    totalPurchasesHT += purchases;
+    tvaCollectee += income(e, "443");
+    tvaDeductible += charge(e, "445");
+    if (sales || purchases) entriesCount++;
   }
   return {
     period: month,
@@ -1914,10 +2363,10 @@ function computeCreditAssessment(entries, now = /* @__PURE__ */ new Date()) {
   const avgMonthlyExpenses = Math.round(flows.expenses / monthsObserved);
   const avgMonthlyNetFlow = avgMonthlyRevenue - avgMonthlyExpenses;
   const netMarginPct = flows.revenue > 0 ? Math.round((flows.revenue - flows.expenses) / flows.revenue * 100) : 0;
-  const salesEntries = windowed.filter((e) => e.creditAccountCode.startsWith("7") && isTreasuryCode(e.debitAccountCode));
+  const salesEntries = windowed.filter((e) => income(e, "7") > 0 && prefixBalance(e, "5") > 0);
   const traced = salesEntries.filter((e) => e.paymentMethod !== "cash").length;
   const traceabilityRate = salesEntries.length ? Math.round(traced / salesEntries.length * 100) : 0;
-  const monthsWithRevenue = new Set(windowed.filter((e) => e.creditAccountCode.startsWith("7")).map((e) => e.date.slice(0, 7))).size;
+  const monthsWithRevenue = new Set(windowed.filter((e) => income(e, "7") > 0).map((e) => e.date.slice(0, 7))).size;
   const regularityRate = Math.round(monthsWithRevenue / monthsObserved * 100);
   const anomalyRate = windowed.length ? windowed.filter((e) => e.status === "anomaly").length / windowed.length : 0;
   const treasury = computeTreasury(entries);
@@ -1978,7 +2427,7 @@ function buildAgentContext(entries, now = /* @__PURE__ */ new Date()) {
     forecast: forecastCash(entries, now),
     credit: computeCreditAssessment(entries, now),
     review: computeReviewCounts(entries),
-    recentEntries: [...entries].sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 8).map((e) => ({ date: e.date, label: e.label, amount: e.amount, debit: e.debitAccountCode, credit: e.creditAccountCode, method: e.paymentMethod, status: e.status }))
+    recentEntries: [...entries].sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 8).map((e) => ({ date: e.date, label: e.label, amount: e.amount, debit: debitCodes(e).join(","), credit: creditCodes(e).join(","), method: e.paymentMethod, status: e.status }))
   };
 }
 
@@ -2277,10 +2726,6 @@ function greetingReply(dossier, text2, userName) {
 init_syscohadaPlan();
 import { randomUUID as randomUUID2 } from "crypto";
 var accountByCode = new Map(SYSCOHADA_ACCOUNTS.map((a) => [a.code, a]));
-function accountLabel(code) {
-  const acc = accountByCode.get(code);
-  return `${code} - ${acc ? acc.label : `Compte ${code}`}`;
-}
 var isKnownAccount = (code) => !!code && accountByCode.has(code);
 var codeOf = (setting) => (setting ?? "").split(" - ")[0].trim();
 var VATABLE_PREFIXES = ["701", "702", "706", "707", "601", "602", "6051", "6052", "6053", "6121", "6241", "6271", "6581", "215", "241", "244", "245"];
@@ -2310,7 +2755,7 @@ function findPrecedent(op, ctx) {
   for (const e of ctx.entries) {
     if (e.clientDossierId !== ctx.dossier.id) continue;
     if (!e.auditTrail.some((a) => a.action === "edited_by_expert")) continue;
-    const nature = [e.debitAccountCode, e.creditAccountCode].find((c) => !isTreasuryCode(c) && /^[2367]/.test(c));
+    const nature = e.lines.map((l) => l.accountCode).find((c) => !isTreasuryCode(c) && /^[2367]/.test(c));
     if (!nature) continue;
     const sameDirection = op.kind === "sale" || op.kind === "other_income" ? nature.startsWith("7") : op.kind === "purchase" || op.kind === "expense" ? /^[63]/.test(nature) : op.kind === "asset_purchase" ? nature.startsWith("2") : false;
     if (!sameDirection) continue;
@@ -2319,11 +2764,11 @@ function findPrecedent(op, ctx) {
   }
   return best;
 }
-function findDuplicate(line, op, date, ctx) {
+function findDuplicate(line2, op, date, ctx) {
   const wanted = tokens(`${op.label} ${op.sourceText}`);
   return ctx.entries.find((e) => {
     if (e.clientDossierId !== ctx.dossier.id) return false;
-    if (e.amount !== line.amount || e.debitAccountCode !== line.debit || e.creditAccountCode !== line.credit) return false;
+    if (e.amount !== line2.amount || !debitCodes(e).includes(line2.debit) || !creditCodes(e).includes(line2.credit)) return false;
     if (dayDiff(e.date, date) > 2) return false;
     if (op.pieceRef && e.pieceRef === op.pieceRef) return true;
     if (e.rawInput.trim().toLowerCase() === op.sourceText.trim().toLowerCase()) return true;
@@ -2419,12 +2864,12 @@ function buildEntries(ops, { ctx, rawInput, inputType, source }) {
     const paid = op.settlement === "partial" ? Math.min(op.paidAmount ?? 0, op.amount) : void 0;
     const settle = (natureCode, side, deferredNature = natureCode) => {
       const tiers = side === "in" ? "4111" : natureCode.startsWith("641") ? "4211" : natureCode.startsWith("645") ? "4311" : "4011";
-      const line = (amount, useTiers, n) => side === "in" ? { debit: useTiers ? "4111" : T, credit: n, amount, method } : { debit: n, credit: useTiers ? tiers : T, amount, method };
-      if (op.settlement === "credit") lines.push(line(op.amount, true, deferredNature));
+      const line2 = (amount, useTiers, n) => side === "in" ? { debit: useTiers ? "4111" : T, credit: n, amount, method } : { debit: n, credit: useTiers ? tiers : T, amount, method };
+      if (op.settlement === "credit") lines.push(line2(op.amount, true, deferredNature));
       else if (op.settlement === "partial" && paid && paid < op.amount) {
-        lines.push({ ...line(paid, false, natureCode), suffix: " (acompte)" });
-        lines.push({ ...line(op.amount - paid, true, deferredNature), suffix: " (reste \xE0 r\xE9gler)" });
-      } else lines.push(line(op.amount, false, natureCode));
+        lines.push({ ...line2(paid, false, natureCode), suffix: " (acompte)" });
+        lines.push({ ...line2(op.amount - paid, true, deferredNature), suffix: " (reste \xE0 r\xE9gler)" });
+      } else lines.push(line2(op.amount, false, natureCode));
     };
     switch (op.kind) {
       case "sale": {
@@ -2479,22 +2924,22 @@ function buildEntries(ops, { ctx, rawInput, inputType, source }) {
       }
     }
     const date = op.date ?? today;
-    lines.forEach((line, idx) => {
-      const natureCode = [line.debit, line.credit].find((c) => /^[2367]/.test(c) && !isTreasuryCode(c)) ?? "";
+    lines.forEach((line2, idx) => {
+      const natureCode = [line2.debit, line2.credit].find((c) => /^[2367]/.test(c) && !isTreasuryCode(c)) ?? "";
       const vatable = op.vatApplicable ?? (!noVatRegime && VAT_KINDS.includes(op.kind) && VATABLE_PREFIXES.some((p) => natureCode.startsWith(p)));
-      const tvaAmount = op.vatAmount !== void 0 && lines.length === 1 ? Math.min(Math.max(0, Math.round(op.vatAmount)), line.amount) : vatable ? Math.round(line.amount * rate / (100 + rate)) : 0;
+      const tvaAmount = op.vatAmount !== void 0 && lines.length === 1 ? Math.min(Math.max(0, Math.round(op.vatAmount)), line2.amount) : vatable ? Math.round(line2.amount * rate / (100 + rate)) : 0;
       let anomaly = op.anomaly;
-      const cashSide = [line.debit, line.credit].some((c) => c === "5711" || c === "5721") && line.method === "cash";
+      const cashSide = [line2.debit, line2.credit].some((c) => c === "5711" || c === "5721") && line2.method === "cash";
       const flaggable = !["transfer", "opening_balance", "capital_contribution", "loan_received", "loan_repayment", "owner_withdrawal", "depreciation"].includes(op.kind);
-      if (!anomaly && cashSide && flaggable && settings.autoFlagLargeCashPayments && line.amount >= settings.cashDeductibilityThreshold) {
-        const inflow = isTreasuryCode(line.debit);
-        anomaly = inflow ? `Encaissement en esp\xE8ces de ${formatFcfa(line.amount)} FCFA (\u2265 seuil de ${formatFcfa(settings.cashDeductibilityThreshold)} FCFA) : renforcer la tra\xE7abilit\xE9 et le justificatif client.` : `Paiement en esp\xE8ces de ${formatFcfa(line.amount)} FCFA (\u2265 seuil de ${formatFcfa(settings.cashDeductibilityThreshold)} FCFA) : charge susceptible d'\xEAtre rejet\xE9e fiscalement.`;
+      if (!anomaly && cashSide && flaggable && settings.autoFlagLargeCashPayments && line2.amount >= settings.cashDeductibilityThreshold) {
+        const inflow = isTreasuryCode(line2.debit);
+        anomaly = inflow ? `Encaissement en esp\xE8ces de ${formatFcfa(line2.amount)} FCFA (\u2265 seuil de ${formatFcfa(settings.cashDeductibilityThreshold)} FCFA) : renforcer la tra\xE7abilit\xE9 et le justificatif client.` : `Paiement en esp\xE8ces de ${formatFcfa(line2.amount)} FCFA (\u2265 seuil de ${formatFcfa(settings.cashDeductibilityThreshold)} FCFA) : charge susceptible d'\xEAtre rejet\xE9e fiscalement.`;
       }
       if (!anomaly && date > today) {
         anomaly = `Date post\xE9rieure \xE0 aujourd'hui (${date}) : v\xE9rifier la date de l'op\xE9ration.`;
       }
       if (settings.duplicateDetection) {
-        const dup = findDuplicate(line, op, date, ctx);
+        const dup = findDuplicate(line2, op, date, ctx);
         if (dup) {
           anomaly = `Doublon possible avec l'\xE9criture ${dup.pieceRef} du ${dup.date} (m\xEAme montant, m\xEAmes comptes).`;
         }
@@ -2502,25 +2947,23 @@ function buildEntries(ops, { ctx, rawInput, inputType, source }) {
       const status = anomaly ? "anomaly" : "pending_review";
       const action = anomaly ? "anomaly_flagged" : "created_by_ai";
       const ref = op.pieceRef ?? `OP-${Math.floor(1e3 + Math.random() * 9e3)}`;
-      const explanation = explain(op, line.method, op.amount, paid, assumed);
+      const explanation = explain(op, line2.method, op.amount, paid, assumed);
+      const entryLines = simpleLines(line2.debit, line2.credit, line2.amount, tvaAmount);
       out.push({
         id: `entry-${randomUUID2()}`,
         clientDossierId: dossier.id,
         date,
-        label: `${op.label}${line.suffix ?? ""}`.slice(0, 160),
+        label: `${op.label}${line2.suffix ?? ""}`.slice(0, 160),
         pieceRef: idx === 0 ? ref : `${ref}-${String.fromCharCode(65 + idx)}`,
-        debitAccount: accountLabel(line.debit),
-        debitAccountCode: line.debit,
-        creditAccount: accountLabel(line.credit),
-        creditAccountCode: line.credit,
-        amount: line.amount,
-        tvaAmount,
+        journal: defaultJournal(entryLines),
+        lines: entryLines.map((l) => ({ ...l, accountLabel: accountByCode.get(l.accountCode)?.label })),
+        amount: line2.amount,
         status,
         detectedAnomaly: anomaly,
         rawInput,
         inputType,
         explanationSimplified: explanation,
-        paymentMethod: line.method,
+        paymentMethod: line2.method,
         auditTrail: [{
           id: `aud-${randomUUID2()}`,
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
@@ -2769,11 +3212,11 @@ function parseSegment(seg, now) {
   }
   if (RE.social.test(norm)) {
     if (!info) return needAmount("les cotisations");
-    return { op: base("expense", "Cotisations sociales", { natureAccountCode: "6451", vatApplicable: false }) };
+    return { op: base("expense", "Cotisations sociales", { natureAccountCode: "6641", vatApplicable: false }) };
   }
   if (RE.salary.test(norm)) {
     if (!info) return needAmount("le salaire");
-    return { op: base("expense", `Salaires${counterparty ? ` \u2013 ${counterparty}` : ""}`, { natureAccountCode: "6411", vatApplicable: false }) };
+    return { op: base("expense", `Salaires${counterparty ? ` \u2013 ${counterparty}` : ""}`, { natureAccountCode: "6611", vatApplicable: false }) };
   }
   if (RE.asset.test(norm)) {
     if (!info) return needAmount("le prix de l'\xE9quipement");
@@ -2809,7 +3252,7 @@ function parseSegment(seg, now) {
   }
   if (RE.otherIncome.test(norm)) {
     if (!info) return needAmount("le montant re\xE7u");
-    return { op: base("other_income", "Produit accessoire", { natureAccountCode: /subvention|don\b/.test(norm) ? "8511" : "7071" }) };
+    return { op: base("other_income", "Produit accessoire", { natureAccountCode: /subvention|don\b/.test(norm) ? "8411" : "7071" }) };
   }
   if (/\b(?:paye|payee|regle|depense|decaisse|sorti|sortie|debourse|reglement)\b/.test(norm)) {
     if (!info) return needAmount("la d\xE9pense");
@@ -2964,7 +3407,7 @@ R\xC8GLES POUR LES OP\xC9RATIONS :
 - Ne choisis PAS le compte de tr\xE9sorerie : il est d\xE9duit automatiquement du mode de paiement (esp\xE8ces \u2192 caisse 5711 ; ch\xE8que ou virement bancaire \u2192 banque 5211 ; Orange Money \u2192 5261 ; MTN MoMo \u2192 5262 ; Wave \u2192 5263 ; Moov Money \u2192 5264).
 - "paymentMethod" = le mode dit par l'utilisateur : "cash" (cash, esp\xE8ces, liquide, comptant), "cheque", "bank_transfer" (virement, banque), "orange_money", "mtn_momo", "wave", "moov_money". Si rien n'est pr\xE9cis\xE9, mets "unspecified".
 - "natureAccountCode" = le compte de l'autre c\xF4t\xE9 de l'\xE9criture, choisi UNIQUEMENT dans cette liste : ${NATURE_ACCOUNTS}.
-  Ventes de marchandises 7011, services 7061, produits finis 7021, achats de marchandises 6011, mati\xE8res premi\xE8res 6021, \xE9lectricit\xE9 6051, eau 6052, carburant 6053, transport 6121, loyer 6221, entretien 6241, t\xE9l\xE9coms 6271, frais bancaires / Mobile Money 6311, salaires 6411, charges sociales 6451, divers 6581, mat\xE9riel informatique 244, v\xE9hicule 215, mat\xE9riel industriel 241, mobilier 245, emprunt 162.
+  Ventes de marchandises 7011, services 7061, produits finis 7021, achats de marchandises 6011, mati\xE8res premi\xE8res 6021, \xE9lectricit\xE9 6051, eau 6052, carburant 6053, transport 6121, loyer 6221, entretien 6241, t\xE9l\xE9coms 6271, frais bancaires / Mobile Money 6311, salaires 6611, charges sociales 6641, imp\xF4ts et taxes 6411, divers 6581, mat\xE9riel informatique 244, v\xE9hicule 215, mat\xE9riel industriel 241, mobilier 245, emprunt 162.
 - "kind" : sale, purchase, expense, asset_purchase (\xE9quipement durable), customer_payment (un client r\xE8gle une dette), supplier_payment (r\xE8glement d'une dette fournisseur), owner_withdrawal (retrait personnel / sans justificatif), transfer (d\xE9placement entre caisse, banque, Mobile Money : paymentMethod = source, toPaymentMethod = destination), loan_received, loan_repayment, capital_contribution, opening_balance (solde de d\xE9part), bank_fee, other_income, depreciation.
 - "settlement" : "paid" (r\xE9gl\xE9), "credit" (pas encore pay\xE9) ou "partial" (acompte : renseigne paidAmount).
 - "amount" = montant TOTAL TTC en FCFA (entier). Quantit\xE9 \xD7 prix unitaire si besoin ("3 sacs \xE0 5000F" = 15000). "45k" = 45000.
@@ -3109,8 +3552,7 @@ async function analyzeWithGemini(input) {
 }
 
 // server/agentRoutes.ts
-var router9 = Router9();
-var ENTRY_INCLUDE2 = { auditTrail: true, debitAccount: true, creditAccount: true };
+var router10 = Router10();
 var INPUT_MODES2 = ["text", "voice", "photo", "mobile_money", "manual", "excel_import"];
 var ALLOWED_DOCUMENT_TYPES = /^(image\/(jpeg|png|webp|heic|heif)|application\/pdf)$/;
 function handler2(fn) {
@@ -3127,7 +3569,7 @@ async function loadContext(req, dossierId) {
   const [entryRows, settingsRow, userRow] = await Promise.all([
     prisma.journalEntry.findMany({
       where: { clientDossierId: dossierId, status: { not: "cancelled" } },
-      include: ENTRY_INCLUDE2,
+      include: ENTRY_INCLUDE,
       orderBy: { date: "desc" },
       take: 2e3
     }),
@@ -3144,7 +3586,7 @@ async function loadContext(req, dossierId) {
 }
 function summarize(entries) {
   if (entries.length === 1) return entries[0].explanationSimplified;
-  const lines = entries.map((e) => `\u2022 ${e.label} \u2014 ${formatFcfa(e.amount)} FCFA (d\xE9bit ${e.debitAccountCode} / cr\xE9dit ${e.creditAccountCode})`);
+  const lines = entries.map((e) => `\u2022 ${e.label} \u2014 ${formatFcfa(e.amount)} FCFA (${accountsSummary(e)})`);
   return `J'ai enregistr\xE9 ${entries.length} \xE9critures :
 ${lines.join("\n")}`;
 }
@@ -3154,7 +3596,7 @@ function reviewNote(entries) {
 
 \u26A0\uFE0F ${anomaly.detectedAnomaly}` : "";
 }
-router9.post("/chat", handler2(async (req, res) => {
+router10.post("/chat", handler2(async (req, res) => {
   const { dossierId, message = "", inputType = "text", pendingText, image } = req.body ?? {};
   if (typeof dossierId !== "string" || !String(message).trim() && !image) {
     return res.status(400).json({ error: "Dossier et message requis." });
@@ -3229,7 +3671,7 @@ router9.post("/chat", handler2(async (req, res) => {
   }
   return res.json({ success: true, intent: outcome.intent, reply: outcome.reply, entries: [], source });
 }));
-router9.post("/dossier-summary", handler2(async (req, res) => {
+router10.post("/dossier-summary", handler2(async (req, res) => {
   const ctx = await loadContext(req, String(req.body?.dossierId ?? ""));
   if (!ctx) return res.status(404).json({ error: "Dossier introuvable." });
   const a = buildAgentContext(ctx.entries, ctx.now);
@@ -3250,16 +3692,16 @@ router9.post("/dossier-summary", handler2(async (req, res) => {
     analytics: a
   });
 }));
-var agentRoutes_default = router9;
+var agentRoutes_default = router10;
 
 // server/authRoutes.ts
 init_db();
-import { Router as Router10 } from "express";
-var router10 = Router10();
+import { Router as Router11 } from "express";
+var router11 = Router11();
 function serializeUser(u) {
   return { id: u.id, email: u.email, name: u.name, role: u.role, dossierId: u.dossierId };
 }
-router10.post("/signup", async (req, res, next) => {
+router11.post("/signup", async (req, res, next) => {
   try {
     const { email, name, password } = req.body ?? {};
     if (typeof email !== "string" || typeof name !== "string" || !email.trim() || !name.trim() || !password) {
@@ -3283,7 +3725,7 @@ router10.post("/signup", async (req, res, next) => {
     next(e);
   }
 });
-router10.post("/login", async (req, res, next) => {
+router11.post("/login", async (req, res, next) => {
   try {
     const { email, password } = req.body ?? {};
     if (!email || !password) {
@@ -3300,11 +3742,11 @@ router10.post("/login", async (req, res, next) => {
     next(e);
   }
 });
-router10.post("/logout", (_req, res) => {
+router11.post("/logout", (_req, res) => {
   res.clearCookie(COOKIE_NAME, { ...COOKIE_OPTIONS, maxAge: void 0 });
   res.status(204).end();
 });
-router10.post("/change-password", requireAuth, async (req, res, next) => {
+router11.post("/change-password", requireAuth, async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = req.body ?? {};
     if (typeof newPassword !== "string" || newPassword.length < 8) {
@@ -3320,7 +3762,7 @@ router10.post("/change-password", requireAuth, async (req, res, next) => {
     next(e);
   }
 });
-router10.get("/me", async (req, res, next) => {
+router11.get("/me", async (req, res, next) => {
   try {
     const token = req.cookies?.[COOKIE_NAME];
     const payload = token ? verifyToken(token) : null;
@@ -3336,12 +3778,12 @@ router10.get("/me", async (req, res, next) => {
     next(e);
   }
 });
-var authRoutes_default = router10;
+var authRoutes_default = router11;
 
 // server/adminRoutes.ts
 init_db();
-import { Router as Router11 } from "express";
-var router11 = Router11();
+import { Router as Router12 } from "express";
+var router12 = Router12();
 var ROLES = ["ADMIN", "COMPTABLE"];
 function requireAdmin(req, res, next) {
   const user = req.user;
@@ -3358,8 +3800,8 @@ function validId(value) {
   if (typeof value !== "string") return null;
   return /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null;
 }
-router11.use(requireAdmin);
-router11.get("/users", async (_req, res, next) => {
+router12.use(requireAdmin);
+router12.get("/users", async (_req, res, next) => {
   try {
     const users = await prisma.user.findMany({ orderBy: { createdAt: "asc" }, include: WITH_ORG });
     res.json(users.map(serializeUser2));
@@ -3367,7 +3809,7 @@ router11.get("/users", async (_req, res, next) => {
     next(e);
   }
 });
-router11.post("/users", async (req, res, next) => {
+router12.post("/users", async (req, res, next) => {
   try {
     const { email, name, password, role } = req.body ?? {};
     if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -3393,7 +3835,7 @@ router11.post("/users", async (req, res, next) => {
     next(e);
   }
 });
-router11.post("/users/:id/role", async (req, res, next) => {
+router12.post("/users/:id/role", async (req, res, next) => {
   try {
     const id = validId(req.params.id);
     if (!id) return res.status(400).json({ error: "Identifiant utilisateur invalide." });
@@ -3411,7 +3853,7 @@ router11.post("/users/:id/role", async (req, res, next) => {
     next(e);
   }
 });
-router11.post("/users/:id/password", async (req, res, next) => {
+router12.post("/users/:id/password", async (req, res, next) => {
   try {
     const id = validId(req.params.id);
     if (!id) return res.status(400).json({ error: "Identifiant utilisateur invalide." });
@@ -3425,7 +3867,7 @@ router11.post("/users/:id/password", async (req, res, next) => {
     next(e);
   }
 });
-router11.post("/users/:id/delete", async (req, res, next) => {
+router12.post("/users/:id/delete", async (req, res, next) => {
   try {
     const id = validId(req.params.id);
     if (!id) return res.status(400).json({ error: "Identifiant utilisateur invalide." });
@@ -3442,7 +3884,7 @@ router11.post("/users/:id/delete", async (req, res, next) => {
     next(e);
   }
 });
-var adminRoutes_default = router11;
+var adminRoutes_default = router12;
 
 // server/app.ts
 var app = express();

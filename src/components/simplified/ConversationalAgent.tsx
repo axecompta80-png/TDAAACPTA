@@ -460,14 +460,14 @@ export const ConversationalAgent: React.FC<ConversationalAgentProps> = ({
 
                       {showTechnicalSYSCOHADA[msg.id + entry.id] && (
                         <div className="mt-2 p-2.5 bg-[#130432] text-white rounded-lg font-mono text-[11px] space-y-1.5 border border-[#3B1578] overflow-hidden break-words">
-                          <div className="flex justify-between">
-                            <span className="text-[#A78BFA] font-bold">Débit : {entry.debitAccount}</span>
-                            <span className="text-[#10B981] font-bold">{entry.amount.toLocaleString('fr-FR')} F</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-[#C4B5FD]">Crédit : {entry.creditAccount}</span>
-                            <span className="text-[#10B981] font-bold">{entry.amount.toLocaleString('fr-FR')} F</span>
-                          </div>
+                          {entry.lines.map((l, i) => (
+                            <div key={i} className="flex justify-between">
+                              <span className={l.debit ? 'text-[#A78BFA] font-bold' : 'text-[#C4B5FD]'}>
+                                {l.debit ? 'Débit' : 'Crédit'} : {l.accountCode}{l.accountLabel ? ` - ${l.accountLabel}` : ''}
+                              </span>
+                              <span className="text-[#10B981] font-bold">{(l.debit || l.credit).toLocaleString('fr-FR')} F</span>
+                            </div>
+                          ))}
                           <div className="text-[10px] text-[#A78BFA]/80 pt-1 border-t border-[#3B1578]">
                             Réf pièce: {entry.pieceRef} • Conforme SYSCOHADA Révisé
                           </div>

@@ -31,7 +31,7 @@ export const ChartOfAccounts: React.FC<ChartOfAccountsProps> = ({ activeDossier,
 
   const accounts = SYSCOHADA_ACCOUNTS.filter(a => !a.dossierId || a.dossierId === activeDossier.id);
   const usage = new Map<string, number>();
-  for (const e of entries) for (const c of [e.debitAccountCode, e.creditAccountCode]) usage.set(c, (usage.get(c) ?? 0) + 1);
+  for (const e of entries) for (const l of e.lines) usage.set(l.accountCode, (usage.get(l.accountCode) ?? 0) + 1);
   const shown = accounts.filter(a => !search || a.code.startsWith(search) || a.label.toLowerCase().includes(search.toLowerCase()));
   const root = parentCode.slice(0, 3);
 

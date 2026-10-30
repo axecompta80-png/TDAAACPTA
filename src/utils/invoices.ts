@@ -1,4 +1,5 @@
-import type { Invoice } from '../types';
+import type { Invoice, InvoiceKind, JournalCode, JournalLine } from '../types';
+import { TVA_COLLECTED, TVA_DEDUCTIBLE, defaultJournal } from './entryLines';
 
 /**
  * Règles de facturation partagées par le serveur (calcul officiel) et le client (aperçu).
@@ -11,28 +12,55 @@ export function computeInvoiceTotals(lines: { quantity: number; unitPrice: numbe
   return { amounts, totalHT, totalTVA, totalTTC: totalHT + totalTVA };
 }
 
-export interface Posting { debit: string; credit: string; amount: number; label: string }
+export interface Posting { label: string; journal: JournalCode; amount: number; lines: JournalLine[] }
+
+export const KIND_LABEL: Record<InvoiceKind, string> = { sale: 'Facture', credit_note: 'Avoir', purchase: 'Facture fournisseur' };
+export const KIND_PREFIX: Record<InvoiceKind, string> = { sale: 'FAC', credit_note: 'AV', purchase: 'FF' };
+
+/** Le tiers est-il un fournisseur (règlements au débit du 401) ? */
+export const isSupplierSide = (kind: InvoiceKind) => kind === 'purchase';
+
+const line = (accountCode: string, debit: number, credit: number): JournalLine => ({ accountCode, debit, credit });
 
 /**
- * Écritures générées à la validation d'une facture (une écriture = une ligne débit / crédit) :
- *   411x / 70x   montant HT
- *   411x / 4431  TVA collectée
- *   + au comptant : trésorerie / 411x  montant TTC (règlement immédiat, lettré automatiquement)
+ * Écritures générées à la validation :
+ *   facture client (VT)      : D 411x TTC / C 70x HT / C 4431 TVA
+ *   avoir client (VT)        : D 70x HT / D 4431 TVA / C 411x TTC
+ *   facture fournisseur (AC) : D 6x HT / D 4452 TVA / C 401x TTC
+ *   + au comptant : règlement immédiat (trésorerie / tiers), lettré automatiquement.
  */
 export function invoicePostings(
-  inv: Pick<Invoice, 'number' | 'customerName' | 'customerAccountCode' | 'salesAccountCode' | 'totalHT' | 'totalTVA' | 'totalTTC' | 'mode'>,
+  inv: Pick<Invoice, 'number' | 'customerName' | 'customerAccountCode' | 'salesAccountCode' | 'totalHT' | 'totalTVA' | 'totalTTC' | 'mode'> & { kind?: InvoiceKind; externalRef?: string },
   treasuryCode?: string,
-): { sale: Posting[]; payment?: Posting } {
-  const sale: Posting[] = [
-    { debit: inv.customerAccountCode, credit: inv.salesAccountCode, amount: inv.totalHT, label: `Facture ${inv.number} — ${inv.customerName} (HT)` },
-  ];
-  if (inv.totalTVA > 0) {
-    sale.push({ debit: inv.customerAccountCode, credit: '4431', amount: inv.totalTVA, label: `Facture ${inv.number} — TVA collectée` });
-  }
-  const payment = inv.mode === 'cash' && treasuryCode
-    ? { debit: treasuryCode, credit: inv.customerAccountCode, amount: inv.totalTTC, label: `Règlement comptant facture ${inv.number}` }
+): { sale: Posting; payment?: Posting } {
+  const kind = inv.kind ?? 'sale';
+  const tiers = inv.customerAccountCode, nature = inv.salesAccountCode;
+  const tva = inv.totalTVA > 0;
+  const lines: JournalLine[] =
+    kind === 'sale' ? [line(tiers, inv.totalTTC, 0), line(nature, 0, inv.totalHT), ...(tva ? [line(TVA_COLLECTED, 0, inv.totalTVA)] : [])]
+    : kind === 'credit_note' ? [line(nature, inv.totalHT, 0), ...(tva ? [line(TVA_COLLECTED, inv.totalTVA, 0)] : []), line(tiers, 0, inv.totalTTC)]
+    : [line(nature, inv.totalHT, 0), ...(tva ? [line(TVA_DEDUCTIBLE, inv.totalTVA, 0)] : []), line(tiers, 0, inv.totalTTC)];
+  const ref = kind === 'purchase' && inv.externalRef ? `${inv.number} (${inv.externalRef})` : inv.number;
+  const sale: Posting = {
+    label: `${KIND_LABEL[kind]} ${ref} — ${inv.customerName}`,
+    journal: kind === 'purchase' ? 'AC' : 'VT', amount: inv.totalTTC, lines,
+  };
+  const payLines: JournalLine[] | undefined = inv.mode === 'cash' && treasuryCode && kind !== 'credit_note'
+    ? kind === 'purchase'
+      ? [line(tiers, inv.totalTTC, 0), line(treasuryCode, 0, inv.totalTTC)]
+      : [line(treasuryCode, inv.totalTTC, 0), line(tiers, 0, inv.totalTTC)]
+    : undefined;
+  const payment = payLines
+    ? { label: `Règlement comptant ${KIND_LABEL[kind].toLowerCase()} ${ref}`, journal: defaultJournal(payLines), amount: inv.totalTTC, lines: payLines }
     : undefined;
   return { sale, payment };
+}
+
+/** Montant d'une écriture utilisable comme règlement : crédit du 411 (client) ou débit du 401 (fournisseur). */
+export function settlementAmount(e: { lines: JournalLine[] }, kind: InvoiceKind): number {
+  return isSupplierSide(kind)
+    ? e.lines.filter(l => l.accountCode.startsWith('40')).reduce((s, l) => s + l.debit, 0)
+    : e.lines.filter(l => l.accountCode.startsWith('411')).reduce((s, l) => s + l.credit, 0);
 }
 
 export function paidAmount(inv: Pick<Invoice, 'payments'>): number {
@@ -79,7 +107,7 @@ export function computeAgedBalance(invoices: Invoice[], today: string): { rows: 
   const byCustomer = new Map<string, AgedRow>();
   const totals = empty('Total');
   for (const inv of invoices) {
-    if (inv.status !== 'validated') continue;
+    if (inv.status !== 'validated' || inv.kind === 'credit_note') continue;
     const due = remainingAmount(inv);
     if (due <= 0) continue;
     // ponytail: regroupement par nom de client ; passer par une table Clients si les homonymes posent problème.

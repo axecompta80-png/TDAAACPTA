@@ -7,124 +7,109 @@ import { downloadXlsx, fileSafe } from '../../utils/excelExport';
 interface GeneralLedgerProps {
   entries: JournalEntry[];
   activeDossier: ClientDossier;
+  /** Ouvre le détail d'une écriture (clic sur un mouvement). */
+  onOpenEntry?: (entry: JournalEntry) => void;
 }
+
+interface Movement { entry: JournalEntry; date: string; pieceRef: string; label: string; debit: number; credit: number }
 
 interface AccountBalanceItem {
   code: string;
   label: string;
   accountClass: number;
+  /** Solde (débit - crédit) à l'ouverture de la période. */
+  opening: number;
   totalDebit: number;
   totalCredit: number;
   debitBalance: number;
   creditBalance: number;
-  movements: {
-    date: string;
-    pieceRef: string;
-    label: string;
-    debit: number;
-    credit: number;
-  }[];
+  movements: Movement[];
 }
+
+const r2 = (n: number) => Math.round(n * 100) / 100;
+const fmt = (n: number) => n.toLocaleString('fr-FR');
+/** Classes de gestion (6 à 8) : leur solde repart de zéro à chaque exercice. */
+const isResultAccount = (code: string) => /^[678]/.test(code);
+const RAN_CODE = '12*';
 
 export const GeneralLedger: React.FC<GeneralLedgerProps> = ({
   entries,
-  activeDossier
+  activeDossier,
+  onOpenEntry
 }) => {
   const [selectedClass, setSelectedClass] = useState<number | 'all'>('all');
   const [expandedAccount, setExpandedAccount] = useState<string | null>(null);
+  const year = String(new Date().getFullYear());
+  const [from, setFrom] = useState(`${year}-01-01`);
+  const [to, setTo] = useState(`${year}-12-31`);
 
-  const dossierEntries = entries.filter(e => e.clientDossierId === activeDossier.id && e.status === 'validated');
+  const dossierEntries = entries.filter(e => e.clientDossierId === activeDossier.id && e.status === 'validated' && e.date <= to);
+  const yearStart = `${from.slice(0, 4)}-01-01`;
 
-  // Compute balance for every active SYSCOHADA account
   const accountMap = new Map<string, AccountBalanceItem>();
-
-  // Ensure accounts have entries
-  dossierEntries.forEach(entry => {
-    // Debit side
-    const debitCode = entry.debitAccountCode;
-    if (!accountMap.has(debitCode)) {
-      const def = SYSCOHADA_ACCOUNTS.find(a => a.code === debitCode);
-      accountMap.set(debitCode, {
-        code: debitCode,
-        label: def ? def.label : entry.debitAccount,
-        accountClass: parseInt(debitCode.charAt(0)) || 5,
-        totalDebit: 0,
-        totalCredit: 0,
-        debitBalance: 0,
-        creditBalance: 0,
-        movements: []
+  const item = (code: string, fallbackLabel?: string) => {
+    if (!accountMap.has(code)) {
+      accountMap.set(code, {
+        code,
+        label: SYSCOHADA_ACCOUNTS.find(a => a.code === code)?.label ?? fallbackLabel ?? `Compte ${code}`,
+        accountClass: parseInt(code.charAt(0)) || 0,
+        opening: 0, totalDebit: 0, totalCredit: 0, debitBalance: 0, creditBalance: 0, movements: [],
       });
     }
-    const debitItem = accountMap.get(debitCode)!;
-    debitItem.totalDebit += entry.amount;
-    debitItem.movements.push({
-      date: entry.date,
-      pieceRef: entry.pieceRef,
-      label: entry.label,
-      debit: entry.amount,
-      credit: 0
-    });
+    return accountMap.get(code)!;
+  };
 
-    // Credit side
-    const creditCode = entry.creditAccountCode;
-    if (!accountMap.has(creditCode)) {
-      const def = SYSCOHADA_ACCOUNTS.find(a => a.code === creditCode);
-      accountMap.set(creditCode, {
-        code: creditCode,
-        label: def ? def.label : entry.creditAccount,
-        accountClass: parseInt(creditCode.charAt(0)) || 7,
-        totalDebit: 0,
-        totalCredit: 0,
-        debitBalance: 0,
-        creditBalance: 0,
-        movements: []
-      });
+  for (const entry of dossierEntries) {
+    for (const l of entry.lines) {
+      if (entry.date >= from) {
+        const acc = item(l.accountCode, l.accountLabel);
+        acc.totalDebit += l.debit;
+        acc.totalCredit += l.credit;
+        acc.movements.push({ entry, date: entry.date, pieceRef: entry.pieceRef, label: l.label ?? entry.label, debit: l.debit, credit: l.credit });
+      } else if (!isResultAccount(l.accountCode) || entry.date >= yearStart) {
+        item(l.accountCode, l.accountLabel).opening += l.debit - l.credit;
+      } else {
+        // Résultat des exercices antérieurs : reporté à nouveau (calculé, aucune écriture de clôture).
+        item(RAN_CODE, 'Report à nouveau (résultats des exercices antérieurs)').opening += l.debit - l.credit;
+      }
     }
-    const creditItem = accountMap.get(creditCode)!;
-    creditItem.totalCredit += entry.amount;
-    creditItem.movements.push({
-      date: entry.date,
-      pieceRef: entry.pieceRef,
-      label: entry.label,
-      debit: 0,
-      credit: entry.amount
-    });
-  });
+  }
 
-  // Calculate net balances
+  // Soldes finaux = à-nouveau + mouvements de la période
   const allAccounts = Array.from(accountMap.values()).map(acc => {
-    const diff = acc.totalDebit - acc.totalCredit;
-    return {
-      ...acc,
-      debitBalance: diff > 0 ? diff : 0,
-      creditBalance: diff < 0 ? Math.abs(diff) : 0
-    };
-  }).sort((a, b) => a.code.localeCompare(b.code));
+    const diff = r2(acc.opening + acc.totalDebit - acc.totalCredit);
+    acc.movements.sort((a, b) => a.date.localeCompare(b.date));
+    return { ...acc, opening: r2(acc.opening), debitBalance: diff > 0 ? diff : 0, creditBalance: diff < 0 ? -diff : 0 };
+  }).filter(a => a.opening || a.movements.length).sort((a, b) => a.code.localeCompare(b.code));
 
-  // Totals
-  const grandTotalDebit = allAccounts.reduce((sum, a) => sum + a.totalDebit, 0);
-  const grandTotalCredit = allAccounts.reduce((sum, a) => sum + a.totalCredit, 0);
-  const grandTotalSoldeDebiteur = allAccounts.reduce((sum, a) => sum + a.debitBalance, 0);
-  const grandTotalSoldeCrediteur = allAccounts.reduce((sum, a) => sum + a.creditBalance, 0);
+  const sum = (f: (a: AccountBalanceItem) => number) => r2(allAccounts.reduce((s, a) => s + f(a), 0));
+  const grandOpening = sum(a => a.opening);
+  const grandTotalDebit = sum(a => a.totalDebit);
+  const grandTotalCredit = sum(a => a.totalCredit);
+  const grandTotalSoldeDebiteur = sum(a => a.debitBalance);
+  const grandTotalSoldeCrediteur = sum(a => a.creditBalance);
 
-  const isBalanced = grandTotalDebit === grandTotalCredit && grandTotalSoldeDebiteur === grandTotalSoldeCrediteur;
+  const isBalanced = grandOpening === 0 && grandTotalDebit === grandTotalCredit && grandTotalSoldeDebiteur === grandTotalSoldeCrediteur;
+  const period = `${from.split('-').reverse().join('/')} au ${to.split('-').reverse().join('/')}`;
 
   const exportXlsx = () => {
     const ledgerRows: (string | number)[][] = [['Compte', 'Intitulé', 'Date', 'Pièce', 'Libellé', 'Débit', 'Crédit', 'Solde cumulé']];
     for (const acc of allAccounts) {
-      let running = 0;
-      for (const m of [...acc.movements].sort((a, b) => a.date.localeCompare(b.date))) {
-        running += m.debit - m.credit;
+      let running = acc.opening;
+      if (acc.opening) ledgerRows.push([acc.code, acc.label, from, '', 'À nouveau', acc.opening > 0 ? acc.opening : 0, acc.opening < 0 ? -acc.opening : 0, running]);
+      for (const m of acc.movements) {
+        running = r2(running + m.debit - m.credit);
         ledgerRows.push([acc.code, acc.label, m.date, m.pieceRef, m.label, m.debit, m.credit, running]);
       }
     }
-    downloadXlsx(`Balance_GrandLivre_${fileSafe(activeDossier.name)}_${new Date().toISOString().slice(0, 10)}`, [
+    downloadXlsx(`Balance_GrandLivre_${fileSafe(activeDossier.name)}_${from}_${to}`, [
       {
         name: 'Balance',
         rows: [
-          ['Compte', 'Intitulé', 'Total débit', 'Total crédit', 'Solde débiteur', 'Solde créditeur'],
-          ...allAccounts.map(a => [a.code, a.label, a.totalDebit, a.totalCredit, a.debitBalance, a.creditBalance]),
-          ['TOTAL', '', grandTotalDebit, grandTotalCredit, grandTotalSoldeDebiteur, grandTotalSoldeCrediteur],
+          [`Balance du ${period}`],
+          ['Compte', 'Intitulé', 'Solde à nouveau', 'Mouvements débit', 'Mouvements crédit', 'Solde débiteur', 'Solde créditeur'],
+          ...allAccounts.map(a => [a.code, a.label, a.opening, a.totalDebit, a.totalCredit, a.debitBalance, a.creditBalance]),
+          ['TOTAL', '', grandOpening, grandTotalDebit, grandTotalCredit, grandTotalSoldeDebiteur, grandTotalSoldeCrediteur],
         ],
       },
       { name: 'Grand Livre', rows: ledgerRows },
@@ -144,11 +129,15 @@ export const GeneralLedger: React.FC<GeneralLedgerProps> = ({
             Balance Générale & Grand Livre SYSCOHADA
           </h3>
           <p className="text-xs text-[#7C709A]">
-            Synthèse comptable des mouvements et soldes pour {activeDossier.name}
+            {activeDossier.name} • période du {period} • cliquez sur un mouvement pour voir l'écriture
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+        <input type="date" value={from} max={to} onChange={e => e.target.value && setFrom(e.target.value)} title="Du"
+          className="text-xs p-1.5 bg-[#F8F7FD] border border-[#DDD6FE] rounded-xl text-[#1E084A]" />
+        <input type="date" value={to} min={from} onChange={e => e.target.value && setTo(e.target.value)} title="Au"
+          className="text-xs p-1.5 bg-[#F8F7FD] border border-[#DDD6FE] rounded-xl text-[#1E084A]" />
         <button
           onClick={exportXlsx}
           className="px-3.5 py-1.5 bg-[#F8F7FD] text-[#1E084A] text-xs font-bold rounded-xl border border-[#DDD6FE] hover:bg-[#EDE9FE] flex items-center gap-1.5 shadow-2xs"
@@ -187,6 +176,7 @@ export const GeneralLedger: React.FC<GeneralLedgerProps> = ({
           { cl: 5, label: 'Cl. 5 Trésorerie' },
           { cl: 6, label: 'Cl. 6 Charges' },
           { cl: 7, label: 'Cl. 7 Produits' },
+          { cl: 8, label: 'Cl. 8 HAO' },
         ].map(item => (
           <button
             key={item.cl}
@@ -210,8 +200,9 @@ export const GeneralLedger: React.FC<GeneralLedgerProps> = ({
               <tr className="bg-[#1E084A] text-white border-b border-[#3B1578] uppercase font-mono text-[11px]">
                 <th className="p-3 w-24">N° Compte</th>
                 <th className="p-3">Intitulé SYSCOHADA</th>
-                <th className="p-3 text-right">Total Débit</th>
-                <th className="p-3 text-right">Total Crédit</th>
+                <th className="p-3 text-right">Solde à nouveau</th>
+                <th className="p-3 text-right">Mouv. Débit</th>
+                <th className="p-3 text-right">Mouv. Crédit</th>
                 <th className="p-3 text-right">Solde Débiteur</th>
                 <th className="p-3 text-right">Solde Créditeur</th>
                 <th className="p-3 text-center w-24">Grand Livre</th>
@@ -228,6 +219,9 @@ export const GeneralLedger: React.FC<GeneralLedgerProps> = ({
                       </td>
                       <td className="p-3 font-semibold text-[#1E084A]">
                         {acc.label}
+                      </td>
+                      <td className="p-3 text-right font-tabular text-[#534674]">
+                        {acc.opening ? `${fmt(Math.abs(acc.opening))} ${acc.opening > 0 ? 'D' : 'C'}` : '—'}
                       </td>
                       <td className="p-3 text-right font-tabular font-bold text-[#1E084A]">
                         {acc.totalDebit > 0 ? acc.totalDebit.toLocaleString('fr-FR') : '—'}
@@ -255,7 +249,7 @@ export const GeneralLedger: React.FC<GeneralLedgerProps> = ({
                     {/* Expandable Grand Livre Details for Account */}
                     {isExpanded && (
                       <tr className="bg-[#FAF8FF]">
-                        <td colSpan={7} className="p-4 border-y border-[#EDE9FE]">
+                        <td colSpan={8} className="p-4 border-y border-[#EDE9FE]">
                           <div className="bg-white p-4 border border-[#DDD6FE] rounded-xl shadow-2xs">
                             <h5 className="text-[12px] font-mono font-bold text-[#1E084A] uppercase mb-2.5">
                               Extrait du Grand Livre : Compte {acc.code} — {acc.label}
@@ -271,8 +265,15 @@ export const GeneralLedger: React.FC<GeneralLedgerProps> = ({
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-[#EDE9FE]">
+                                {acc.opening !== 0 && (
+                                  <tr className="italic text-[#7C709A]">
+                                    <td className="py-1.5 font-mono">{from}</td><td /><td className="py-1.5">À nouveau</td>
+                                    <td className="py-1.5 text-right font-tabular">{acc.opening > 0 ? fmt(acc.opening) : '—'}</td>
+                                    <td className="py-1.5 text-right font-tabular">{acc.opening < 0 ? fmt(-acc.opening) : '—'}</td>
+                                  </tr>
+                                )}
                                 {acc.movements.map((m, i) => (
-                                  <tr key={i}>
+                                  <tr key={i} onClick={() => onOpenEntry?.(m.entry)} className={onOpenEntry ? 'cursor-pointer hover:bg-[#F5F3FF]' : ''}>
                                     <td className="py-1.5 font-mono text-[#534674]">{m.date}</td>
                                     <td className="py-1.5 font-mono text-[#7C709A]">{m.pieceRef}</td>
                                     <td className="py-1.5 text-[#1E084A]">{m.label}</td>
@@ -302,6 +303,9 @@ export const GeneralLedger: React.FC<GeneralLedgerProps> = ({
                   Totaux Généraux de la Balance (SYSCOHADA)
                 </td>
                 <td className="p-3.5 text-right font-tabular text-[#A78BFA]">
+                  {fmt(grandOpening)} F
+                </td>
+                <td className="p-3.5 text-right font-tabular text-[#A78BFA]">
                   {grandTotalDebit.toLocaleString('fr-FR')} F
                 </td>
                 <td className="p-3.5 text-right font-tabular text-[#A78BFA]">
@@ -314,8 +318,8 @@ export const GeneralLedger: React.FC<GeneralLedgerProps> = ({
                   {grandTotalSoldeCrediteur.toLocaleString('fr-FR')} F
                 </td>
                 <td className="p-3.5 text-center">
-                  <span className="text-[11px] text-[#065F46] bg-[#D1FAE5] px-2 py-0.5 rounded-full font-bold">
-                    100% OK
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${isBalanced ? 'text-[#065F46] bg-[#D1FAE5]' : 'text-[#991B1B] bg-[#FEE2E2]'}`}>
+                    {isBalanced ? 'Équilibrée' : 'Écart'}
                   </span>
                 </td>
               </tr>

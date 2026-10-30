@@ -1,4 +1,4 @@
-import type { ClientDossier, DossierDirectoryItem, DossierInfo, JournalEntry, AppNotification, PlatformSettings, SYSCOHADAAccount, Invoice, InvoiceInput } from '../types';
+import type { ClientDossier, DossierDirectoryItem, DossierInfo, JournalEntry, AppNotification, PlatformSettings, SYSCOHADAAccount, Invoice, InvoiceInput, RecurringEntry } from '../types';
 
 export interface BootstrapData {
   dossiers: ClientDossier[];
@@ -9,13 +9,14 @@ export interface BootstrapData {
   settingsByDossier: Record<string, PlatformSettings>;
   accounts: SYSCOHADAAccount[];
   invoices: Invoice[];
+  recurring: RecurringEntry[];
 }
 
 export interface BatchValidateResult {
   validated: JournalEntry[];
   refused: { id: string; reason: string }[];
 }
-export interface InvoiceWithEntries { invoice: Invoice; entries: JournalEntry[] }
+export interface InvoiceWithEntries { invoice: Invoice; entries: JournalEntry[]; related?: Invoice[] }
 const post = (body?: unknown): RequestInit => ({ method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) });
 
 /**
@@ -50,6 +51,8 @@ export const api = {
   updateDossier: (dossier: ClientDossier) =>
     request<ClientDossier>(`/dossiers/${dossier.id}/update`, { method: 'POST', body: JSON.stringify(dossier) }),
   deleteDossier: (id: string) => request<void>(`/dossiers/${id}/delete`, { method: 'POST' }),
+  /** Bloque les écritures jusqu'à `until` inclus (null : tout débloquer). */
+  lockDossier: (id: string, until: string | null) => request<ClientDossier>(`/dossiers/${id}/lock`, post({ until })),
 
   // Écritures comptables
   createEntry: (entry: JournalEntry) =>
@@ -62,6 +65,13 @@ export const api = {
   submitEntry: (id: string) => request<JournalEntry>(`/entries/${id}/submit`, post({})),
   unvalidateEntry: (id: string, reason?: string) => request<JournalEntry>(`/entries/${id}/unvalidate`, post({ reason })),
   cancelEntry: (id: string, reason?: string) => request<JournalEntry>(`/entries/${id}/cancel`, post({ reason })),
+  reverseEntry: (id: string, reason?: string, date?: string) =>
+    request<{ original: JournalEntry; reversal: JournalEntry }>(`/entries/${id}/reverse`, post({ reason, date })),
+
+  // Écritures récurrentes
+  createRecurring: (r: { clientDossierId: string; label: string; journal: string; lines: JournalEntry['lines']; paymentMethod: string; startDate: string }) =>
+    request<RecurringEntry>('/recurring', post(r)),
+  stopRecurring: (id: string) => request<RecurringEntry>(`/recurring/${id}/stop`, post({})),
 
   // Plan comptable (sous-comptes propres à un dossier)
   createAccount: (a: { dossierId: string; parentCode: string; code: string; label: string }) =>
@@ -74,6 +84,7 @@ export const api = {
     request<Invoice>('/invoices', post({ ...input, clientDossierId: dossierId, submit })),
   updateInvoice: (id: string, input: InvoiceInput, submit: boolean) =>
     request<Invoice>(`/invoices/${id}/update`, post({ ...input, submit })),
+  deleteInvoice: (id: string) => request<void>(`/invoices/${id}/delete`, post({})),
   submitInvoice: (id: string) => request<Invoice>(`/invoices/${id}/submit`, post({})),
   validateInvoice: (id: string) => request<InvoiceWithEntries>(`/invoices/${id}/validate`, post({})),
   cancelInvoice: (id: string, reason?: string) => request<InvoiceWithEntries>(`/invoices/${id}/cancel`, post({ reason })),

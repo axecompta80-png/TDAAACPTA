@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ClientDossier, DossierDirectoryItem, DossierInfo, JournalEntry, AppNotification, NotificationType, NotificationCategory, PlatformSettings, Invoice } from './types';
+import { ClientDossier, DossierDirectoryItem, DossierInfo, JournalEntry, AppNotification, NotificationType, NotificationCategory, PlatformSettings, Invoice, RecurringEntry } from './types';
 import { registerCustomAccounts } from './data/syscohadaPlan';
 import { showDeviceNotification } from './utils/deviceNotify';
 import { DEFAULT_PLATFORM_SETTINGS } from './data/initialSettings';
@@ -19,6 +19,7 @@ import { GeneralLedger } from './components/expert/GeneralLedger';
 import { FinancialStatements } from './components/expert/FinancialStatements';
 import { TaxCompliance } from './components/expert/TaxCompliance';
 import { AuditTrailModal } from './components/expert/AuditTrailModal';
+import { EntryFormModal } from './components/expert/EntryFormModal';
 import { ExcelImportModal } from './components/ExcelImportModal';
 import { CompanySetup } from './components/onboarding/CompanySetup';
 import { AddDossierModal } from './components/AddDossierModal';
@@ -35,6 +36,7 @@ import {
   FileText,
   ListTree
 } from 'lucide-react';
+import { accountsSummary, nextMonthly } from './utils/entryLines';
 
 interface AppProps {
   currentUser: CurrentUser;
@@ -60,6 +62,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [recurring, setRecurring] = useState<RecurringEntry[]>([]);
   // Incrémenté quand le plan comptable change (les comptes vivent hors de l'état React).
   const [, setPlanVersion] = useState(0);
 
@@ -73,6 +76,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
 
         registerCustomAccounts(data.accounts ?? []);
         setInvoices(data.invoices ?? []);
+        setRecurring(data.recurring ?? []);
         setSettingsByDossier(data.settingsByDossier);
         setDossiers(data.dossiers);
         setDirectory(data.directory);
@@ -109,6 +113,9 @@ export default function App({ currentUser, onLogout }: AppProps) {
   const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [invoiceRequest, setInvoiceRequest] = useState<{ kind: 'sale' | 'purchase'; n: number } | undefined>();
+  const [journalSearch, setJournalSearch] = useState<{ q: string; n: number } | undefined>();
+  const [entryForm, setEntryForm] = useState<Partial<JournalEntry> | null>(null);
 
   // Le dossier actif est une simple préférence d'affichage locale, pas une donnée comptable.
   useEffect(() => {
@@ -214,7 +221,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
         isAnomaly ? 'Alerte Anomalie détectée' : 'Nouvelle opération enregistrée',
         isAnomaly
           ? `Écriture "${saved.label}" (${saved.amount.toLocaleString('fr-FR')} FCFA) : ${saved.detectedAnomaly || 'Anomalie détectée'}`
-          : `${saved.label} • ${saved.amount.toLocaleString('fr-FR')} FCFA imputé au débit ${saved.debitAccountCode} / crédit ${saved.creditAccountCode}`,
+          : `${saved.label} • ${saved.amount.toLocaleString('fr-FR')} FCFA imputé ${accountsSummary(saved)}`,
         isAnomaly ? 'warning' : 'success',
         'compta',
         {
@@ -284,9 +291,16 @@ export default function App({ currentUser, onLogout }: AppProps) {
     }
   };
 
-  // Soumission / dévalidation / annulation d'une écriture
-  const handleEntryAction = async (action: 'submit' | 'unvalidate' | 'cancel', id: string, reason?: string) => {
+  // Soumission / dévalidation / annulation / contre-passation d'une écriture
+  const handleEntryAction = async (action: 'submit' | 'unvalidate' | 'cancel' | 'reverse', id: string, reason?: string) => {
     try {
+      if (action === 'reverse') {
+        const { original, reversal } = await api.reverseEntry(id, reason || undefined);
+        setEntries(prev => [reversal, ...prev.map(e => e.id === original.id ? original : e)]);
+        setInvoices(prev => prev.map(inv => ({ ...inv, payments: inv.payments.filter(p => p.entryId !== id) })));
+        showToast(`Contre-passation ${reversal.pieceRef} enregistrée.`);
+        return;
+      }
       const saved = action === 'submit' ? await api.submitEntry(id)
         : action === 'unvalidate' ? await api.unvalidateEntry(id, reason)
         : await api.cancelEntry(id, reason);
@@ -304,20 +318,38 @@ export default function App({ currentUser, onLogout }: AppProps) {
   const upsertInvoice = (inv: Invoice) =>
     setInvoices(prev => prev.some(i => i.id === inv.id) ? prev.map(i => i.id === inv.id ? inv : i) : [inv, ...prev]);
 
-  // Single entry update
-  const handleUpdateEntry = async (updatedEntry: JournalEntry) => {
+  // Période bloquée (mois de TVA déclaré, exercice clôturé)
+  const handleLock = async (until: string | null) => {
     try {
-      const saved = await api.updateEntry(updatedEntry);
-      setEntries(prev => prev.map(e => e.id === saved.id ? saved : e));
-      pushNotification(
-        'Écriture mise à jour',
-        `L'écriture "${saved.label}" a été modifiée${saved.status === 'validated' ? ' et validée' : ' (en attente de validation)'}.`,
-        'success',
-        'compta'
-      );
+      const saved = await api.lockDossier(activeDossier.id, until);
+      setDossiers(prev => prev.map(d => d.id === saved.id ? saved : d));
+      showToast(saved.lockedUntil ? `Écritures bloquées jusqu'au ${saved.lockedUntil.split('-').reverse().join('/')}.` : 'Toutes les périodes sont débloquées.');
     } catch (e: any) {
-      console.error('Erreur lors de la mise à jour de l\'écriture', e);
-      showToast(e?.message || "Erreur lors de la mise à jour de l'écriture.");
+      showToast(e?.message || 'Blocage impossible.');
+    }
+  };
+
+  // Demandes venues du bouton « Nouveau » et de la recherche globale (n : horodatage pour rejouer la même demande)
+
+  // Formulaire d'écriture (saisie manuelle, modification, duplication)
+  const handleSaveEntry = async (entry: JournalEntry, isNew: boolean, repeatMonthly?: boolean): Promise<boolean> => {
+    try {
+      const saved = isNew ? await api.createEntry(entry) : await api.updateEntry(entry);
+      setEntries(prev => isNew ? [saved, ...prev] : prev.map(e => e.id === saved.id ? saved : e));
+      if (repeatMonthly) {
+        const day = Number(saved.date.slice(8, 10));
+        const r = await api.createRecurring({
+          clientDossierId: saved.clientDossierId, label: saved.label, journal: saved.journal, paymentMethod: saved.paymentMethod,
+          lines: saved.lines.map(({ accountCode, label, debit, credit }) => ({ accountCode, label, debit, credit })),
+          startDate: nextMonthly(saved.date, day),
+        });
+        setRecurring(prev => [...prev, r]);
+      }
+      showToast(`Écriture ${saved.pieceRef} ${isNew ? 'enregistrée' : 'modifiée'}${saved.status === 'validated' ? ' et validée' : ''}${repeatMonthly ? ', répétée chaque mois' : ''}.`);
+      return true;
+    } catch (e: any) {
+      showToast(e?.message || "Erreur lors de l'enregistrement de l'écriture.");
+      return false;
     }
   };
 
@@ -492,6 +524,13 @@ export default function App({ currentUser, onLogout }: AppProps) {
         onLogout={onLogout}
         isTreasuryPageActive={activePage === 'treasury'}
         onOpenTreasuryPage={() => setActivePage('treasury')}
+        onNew={what => {
+          setCurrentMode('expert');
+          setActivePage('home');
+          if (what === 'entry') setEntryForm({});
+          else { showExpertTab('invoices'); setInvoiceRequest({ kind: what, n: Date.now() }); }
+        }}
+        onSearch={q => { setCurrentMode('expert'); setActivePage('home'); showExpertTab('journal'); setJournalSearch({ q, n: Date.now() }); }}
       />
 
       {/* Main Body Content */}
@@ -651,7 +690,13 @@ export default function App({ currentUser, onLogout }: AppProps) {
                 currentUser={currentUser}
                 onBatchValidate={handleBatchValidate}
                 onEntryAction={handleEntryAction}
-                onUpdateEntry={handleUpdateEntry}
+                onEditEntry={entry => setEntryForm(entry ?? {})}
+                search={journalSearch}
+                recurring={recurring.filter(r => r.clientDossierId === activeDossier.id)}
+                onStopRecurring={async id => {
+                  try { const r = await api.stopRecurring(id); setRecurring(prev => prev.filter(x => x.id !== r.id)); showToast('Écriture récurrente arrêtée.'); }
+                  catch (e: any) { showToast(e?.message || 'Arrêt impossible.'); }
+                }}
                 onViewAuditTrail={(entry) => setSelectedAuditEntry(entry)}
                 onOpenExcelImport={() => setIsExcelImportOpen(true)}
               />
@@ -664,6 +709,8 @@ export default function App({ currentUser, onLogout }: AppProps) {
                 activeDossier={activeDossier}
                 currentUser={currentUser}
                 onInvoiceChanged={upsertInvoice}
+                onInvoiceDeleted={id => setInvoices(prev => prev.filter(i => i.id !== id))}
+                request={invoiceRequest}
                 onEntriesChanged={mergeEntries}
                 notify={showToast}
               />
@@ -683,6 +730,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
               <GeneralLedger
                 entries={liveEntries}
                 activeDossier={activeDossier}
+                onOpenEntry={setSelectedAuditEntry}
               />
             )}
 
@@ -690,6 +738,7 @@ export default function App({ currentUser, onLogout }: AppProps) {
               <FinancialStatements
                 entries={liveEntries}
                 activeDossier={activeDossier}
+                onLock={handleLock}
               />
             )}
 
@@ -697,6 +746,8 @@ export default function App({ currentUser, onLogout }: AppProps) {
               <TaxCompliance
                 entries={liveEntries}
                 activeDossier={activeDossier}
+                onLock={handleLock}
+                onNewEntry={setEntryForm}
               />
             )}
           </div>
@@ -718,6 +769,18 @@ export default function App({ currentUser, onLogout }: AppProps) {
           </div>
         </div>
       </footer>
+
+      {/* Formulaire d'écriture */}
+      {entryForm && activeDossier && (
+        <EntryFormModal
+          key={entryForm.id ?? 'new'}
+          dossier={activeDossier}
+          entry={entryForm}
+          authorName={currentUser.name}
+          onSave={handleSaveEntry}
+          onClose={() => setEntryForm(null)}
+        />
+      )}
 
       {/* Audit Trail Modal */}
       {selectedAuditEntry && (

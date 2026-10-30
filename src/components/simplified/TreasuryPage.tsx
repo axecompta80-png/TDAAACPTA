@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { JournalEntry, ClientDossier } from '../../types';
 import { EvolutionChart } from '../EvolutionChart';
 import { computeFlows, computeReceivables, computeTreasury, periodBounds } from '../../utils/analytics';
-import { isTreasuryCode } from '../../utils/paymentAccounts';
 import {
   Wallet,
   Smartphone,
@@ -16,6 +15,7 @@ import {
   Layers,
   Scale
 } from 'lucide-react';
+import { prefixBalance } from '../../utils/entryLines';
 
 interface TreasuryPageProps {
   entries: JournalEntry[];
@@ -56,7 +56,7 @@ export const TreasuryPage: React.FC<TreasuryPageProps> = ({
   const netMargin = totalIncome - totalExpenses;
 
   const monthInflows = dossierEntries.filter(e =>
-    e.date >= month.from && isTreasuryCode(e.debitAccountCode) && !isTreasuryCode(e.creditAccountCode)
+    e.date >= month.from && prefixBalance(e, '5') > 0
   );
   const tracedShare = monthInflows.length
     ? Math.round((monthInflows.filter(e => e.paymentMethod !== 'cash').length / monthInflows.length) * 100)

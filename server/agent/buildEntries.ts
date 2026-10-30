@@ -9,6 +9,7 @@ import {
   treasuryAccountFor,
 } from '../../src/utils/paymentAccounts';
 import { formatFcfa } from '../../src/utils/amounts';
+import { simpleLines, defaultJournal, debitCodes, creditCodes } from '../../src/utils/entryLines';
 import type { AgentRequestContext, OperationKind, ParsedOperation } from './types';
 
 /**
@@ -28,10 +29,6 @@ interface Line {
 
 const accountByCode = new Map(SYSCOHADA_ACCOUNTS.map(a => [a.code, a]));
 
-export function accountLabel(code: string): string {
-  const acc = accountByCode.get(code);
-  return `${code} - ${acc ? acc.label : `Compte ${code}`}`;
-}
 
 export const isKnownAccount = (code: string | undefined): code is string => !!code && accountByCode.has(code);
 
@@ -72,7 +69,7 @@ function findPrecedent(op: ParsedOperation, ctx: AgentRequestContext) {
   for (const e of ctx.entries) {
     if (e.clientDossierId !== ctx.dossier.id) continue;
     if (!e.auditTrail.some(a => a.action === 'edited_by_expert')) continue;
-    const nature = [e.debitAccountCode, e.creditAccountCode].find(c => !isTreasuryCode(c) && /^[2367]/.test(c));
+    const nature = e.lines.map(l => l.accountCode).find(c => !isTreasuryCode(c) && /^[2367]/.test(c));
     if (!nature) continue;
     const sameDirection =
       op.kind === 'sale' || op.kind === 'other_income' ? nature.startsWith('7')
@@ -90,7 +87,7 @@ function findDuplicate(line: Line, op: ParsedOperation, date: string, ctx: Agent
   const wanted = tokens(`${op.label} ${op.sourceText}`);
   return ctx.entries.find(e => {
     if (e.clientDossierId !== ctx.dossier.id) return false;
-    if (e.amount !== line.amount || e.debitAccountCode !== line.debit || e.creditAccountCode !== line.credit) return false;
+    if (e.amount !== line.amount || !debitCodes(e).includes(line.debit) || !creditCodes(e).includes(line.credit)) return false;
     if (dayDiff(e.date, date) > 2) return false;
     if (op.pieceRef && e.pieceRef === op.pieceRef) return true;
     if (e.rawInput.trim().toLowerCase() === op.sourceText.trim().toLowerCase()) return true;
@@ -313,6 +310,7 @@ export function buildEntries(ops: ParsedOperation[], { ctx, rawInput, inputType,
       const action: AuditLog['action'] = anomaly ? 'anomaly_flagged' : 'created_by_ai';
       const ref = op.pieceRef ?? `OP-${Math.floor(1000 + Math.random() * 9000)}`;
       const explanation = explain(op, line.method, op.amount, paid, assumed);
+      const entryLines = simpleLines(line.debit, line.credit, line.amount, tvaAmount);
 
       out.push({
         id: `entry-${randomUUID()}`,
@@ -320,12 +318,9 @@ export function buildEntries(ops: ParsedOperation[], { ctx, rawInput, inputType,
         date,
         label: `${op.label}${line.suffix ?? ''}`.slice(0, 160),
         pieceRef: idx === 0 ? ref : `${ref}-${String.fromCharCode(65 + idx)}`,
-        debitAccount: accountLabel(line.debit),
-        debitAccountCode: line.debit,
-        creditAccount: accountLabel(line.credit),
-        creditAccountCode: line.credit,
+        journal: defaultJournal(entryLines),
+        lines: entryLines.map(l => ({ ...l, accountLabel: accountByCode.get(l.accountCode)?.label })),
         amount: line.amount,
-        tvaAmount,
         status,
         detectedAnomaly: anomaly,
         rawInput,

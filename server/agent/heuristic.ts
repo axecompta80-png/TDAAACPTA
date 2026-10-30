@@ -285,11 +285,11 @@ export function parseSegment(seg: string, now: Date): SegmentResult {
   // 8. Personnel
   if (RE.social.test(norm)) {
     if (!info) return needAmount('les cotisations');
-    return { op: base('expense', 'Cotisations sociales', { natureAccountCode: '6451', vatApplicable: false }) };
+    return { op: base('expense', 'Cotisations sociales', { natureAccountCode: '6641', vatApplicable: false }) };
   }
   if (RE.salary.test(norm)) {
     if (!info) return needAmount('le salaire');
-    return { op: base('expense', `Salaires${counterparty ? ` – ${counterparty}` : ''}`, { natureAccountCode: '6411', vatApplicable: false }) };
+    return { op: base('expense', `Salaires${counterparty ? ` – ${counterparty}` : ''}`, { natureAccountCode: '6611', vatApplicable: false }) };
   }
 
   // 9. Immobilisation
@@ -336,7 +336,7 @@ export function parseSegment(seg: string, now: Date): SegmentResult {
 
   if (RE.otherIncome.test(norm)) {
     if (!info) return needAmount('le montant reçu');
-    return { op: base('other_income', 'Produit accessoire', { natureAccountCode: /subvention|don\b/.test(norm) ? '8511' : '7071' }) };
+    return { op: base('other_income', 'Produit accessoire', { natureAccountCode: /subvention|don\b/.test(norm) ? '8411' : '7071' }) };
   }
 
   // 13. Verbes génériques : direction connue, nature inconnue → vérification humaine

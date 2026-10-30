@@ -219,7 +219,7 @@ export function classifyTransactionSmart(
   }
   // 7. Salaires & Avances
   else if (norm.includes('salaire') || norm.includes('paie') || norm.includes('avance sur salaire') || norm.includes('gardien') || norm.includes('personnel')) {
-    debitCode = '6411';
+    debitCode = '6611';
     creditCode = treasuryCode;
   }
   // 8. Frais bancaires / commissions

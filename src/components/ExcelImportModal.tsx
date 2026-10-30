@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { JournalEntry, ClientDossier, PaymentMethod, TransactionStatus } from '../types';
 import { SYSCOHADA_ACCOUNTS } from '../data/syscohadaPlan';
+import { simpleLines, defaultJournal } from '../utils/entryLines';
 import { 
   parseExcelBuffer, 
   parseCellAmount,
@@ -258,6 +259,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     }
 
     const newEntries: JournalEntry[] = selectedRows.map((r, i) => {
+      const lines = simpleLines(r.debitAccountCode, r.creditAccountCode, r.amount, r.tvaAmount);
       // Un import arrive soumis ou en brouillon ; le serveur valide d'office les lignes sûres.
       const status: TransactionStatus = importAsValidated ? 'pending_review' : 'draft';
       return {
@@ -265,12 +267,9 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         date: r.date,
         label: r.label,
         pieceRef: r.pieceRef,
-        debitAccount: `${r.debitAccountCode} - ${r.debitAccountLabel}`,
-        debitAccountCode: r.debitAccountCode,
-        creditAccount: `${r.creditAccountCode} - ${r.creditAccountLabel}`,
-        creditAccountCode: r.creditAccountCode,
+        journal: defaultJournal(lines),
+        lines,
         amount: r.amount,
-        tvaAmount: r.tvaAmount,
         clientDossierId: targetDossierId,
         status,
         detectedAnomaly: r.anomaly,

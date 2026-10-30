@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { JournalEntry, ClientDossier } from '../../types';
-import { SYSCOHADA_ACCOUNTS, accountsForDossier } from '../../data/syscohadaPlan';
+import React, { useEffect, useState } from 'react';
+import { JournalEntry, ClientDossier, RecurringEntry } from '../../types';
+import { JOURNALS, isLocked } from '../../utils/entryLines';
 import { CurrentUser } from '../../utils/authApi';
 import { downloadXlsx, fileSafe } from '../../utils/excelExport';
 import { 
@@ -21,7 +21,11 @@ import {
   Send,
   Undo2,
   Ban,
-  FilePen
+  FilePen,
+  Plus,
+  Copy,
+  RotateCcw,
+  Lock
 } from 'lucide-react';
 
 const STATUS_LABEL: Record<JournalEntry['status'], string> = {
@@ -38,8 +42,13 @@ interface JournalValidationProps {
   activeDossier: ClientDossier;
   currentUser: CurrentUser;
   onBatchValidate: (entryIds: string[]) => void;
-  onEntryAction: (action: 'submit' | 'unvalidate' | 'cancel', id: string, reason?: string) => void;
-  onUpdateEntry: (updatedEntry: JournalEntry) => void;
+  onEntryAction: (action: 'submit' | 'unvalidate' | 'cancel' | 'reverse', id: string, reason?: string) => void;
+  /** Ouvre le formulaire d'écriture : modification (avec id) ou nouvelle écriture pré-remplie (sans id). */
+  onEditEntry: (entry?: Partial<JournalEntry>) => void;
+  /** Recherche globale : remplace la recherche et efface les filtres. */
+  search?: { q: string; n: number };
+  recurring?: RecurringEntry[];
+  onStopRecurring?: (id: string) => void;
   onViewAuditTrail: (entry: JournalEntry) => void;
   onOpenExcelImport?: () => void;
 }
@@ -50,23 +59,29 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
   currentUser,
   onBatchValidate,
   onEntryAction,
-  onUpdateEntry,
+  onEditEntry,
+  search,
+  recurring = [],
+  onStopRecurring,
   onViewAuditTrail,
   onOpenExcelImport
 }) => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [editingEntry, setEditingEntry] = useState<JournalEntry | null>(null);
-
-  // Edit form state
-  const [editDebitCode, setEditDebitCode] = useState('');
-  const [editCreditCode, setEditCreditCode] = useState('');
-  const [editLabel, setEditLabel] = useState('');
-  const [editAmount, setEditAmount] = useState<number>(0);
+  const [journalFilter, setJournalFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [showRecurring, setShowRecurring] = useState(false);
+  useEffect(() => {
+    if (!search) return;
+    setSearchTerm(search.q); setFilterStatus('all'); setJournalFilter(''); setDateFrom(''); setDateTo('');
+  }, [search?.n]);
 
   const dossierEntries = entries.filter(e => e.clientDossierId === activeDossier.id);
-  const accounts = accountsForDossier(activeDossier.id);
+  const locked = (e: JournalEntry) => isLocked(e.date, activeDossier.lockedUntil);
+  const reversedIds = new Set(dossierEntries.filter(e => e.reversalOfId && e.status !== 'cancelled').map(e => e.reversalOfId));
+  const canReverse = (e: JournalEntry) => e.status === 'validated' && !e.invoiceId && !e.reversalOfId && !reversedIds.has(e.id);
   const canValidateEntry = (e: JournalEntry) => e.status === 'pending_review' || e.status === 'anomaly';
   const askReason = (what: string) => window.prompt(`Motif de ${what} (facultatif) :`, '');
 
@@ -97,15 +112,19 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
     }
   };
 
-  // Filter entries
+  // Filtres : statut, journal, période, recherche (libellé, pièce, compte, montant)
+  const term = searchTerm.trim().toLowerCase();
+  const termAmount = Number(term.replace(/[\s.]/g, '').replace(',', '.'));
   const filteredEntries = dossierEntries.filter(entry => {
-    const matchesStatus = filterStatus === 'all' ? true : entry.status === filterStatus;
-    const matchesSearch = searchTerm === '' || 
-      entry.label.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      entry.pieceRef.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      entry.debitAccount.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      entry.creditAccount.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesStatus && matchesSearch;
+    if (filterStatus !== 'all' && entry.status !== filterStatus) return false;
+    if (journalFilter && entry.journal !== journalFilter) return false;
+    if (dateFrom && entry.date < dateFrom) return false;
+    if (dateTo && entry.date > dateTo) return false;
+    return !term ||
+      entry.label.toLowerCase().includes(term) ||
+      entry.pieceRef.toLowerCase().includes(term) ||
+      entry.lines.some(l => l.accountCode.startsWith(term) || (l.accountLabel ?? '').toLowerCase().includes(term) ||
+        (termAmount > 0 && (l.debit === termAmount || l.credit === termAmount)));
   });
 
   // Sélection : ne compte que les lignes visibles (filtre + recherche) ; chaque bouton n'agit que sur les lignes concernées.
@@ -121,71 +140,27 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
     );
   };
 
-  // Open edit modal
-  const startEdit = (entry: JournalEntry) => {
-    setEditingEntry(entry);
-    setEditDebitCode(entry.debitAccountCode);
-    setEditCreditCode(entry.creditAccountCode);
-    setEditLabel(entry.label);
-    setEditAmount(entry.amount);
-  };
-
-  const saveEdit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingEntry) return;
-
-    const debitAcc = SYSCOHADA_ACCOUNTS.find(a => a.code === editDebitCode);
-    const creditAcc = SYSCOHADA_ACCOUNTS.find(a => a.code === editCreditCode);
-
-    const updated: JournalEntry = {
-      ...editingEntry,
-      label: editLabel,
-      amount: editAmount,
-      debitAccountCode: editDebitCode,
-      debitAccount: debitAcc ? `${debitAcc.code} - ${debitAcc.label}` : editDebitCode,
-      creditAccountCode: editCreditCode,
-      creditAccount: creditAcc ? `${creditAcc.code} - ${creditAcc.label}` : editCreditCode,
-      // Une correction ne valide jamais : l'écriture repasse en attente (sauf brouillon).
-      status: editingEntry.status === 'draft' ? 'draft' : 'pending_review',
-      detectedAnomaly: undefined,
-      auditTrail: [
-        ...editingEntry.auditTrail,
-        {
-          id: `aud-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          action: 'edited_by_expert',
-          author: currentUser.name,
-          notes: `Correction d'imputation : Débit ${editDebitCode}, Crédit ${editCreditCode}`
-        }
-      ]
-    };
-
-    onUpdateEntry(updated);
-    setEditingEntry(null);
-  };
+  const duplicate = (e: JournalEntry) => onEditEntry({
+    journal: e.journal, label: e.label, lines: e.lines.map(({ accountCode, label, debit, credit }) => ({ accountCode, label, debit, credit })),
+  });
 
   const exportXlsx = () => {
     downloadXlsx(`Journal_${fileSafe(activeDossier.name)}_${new Date().toISOString().slice(0, 10)}`, [{
       name: 'Journal',
       rows: [
-        ['Date', 'Pièce', 'Libellé', 'Compte débit', 'Compte crédit', 'Montant', 'TVA', 'Statut'],
-        ...filteredEntries.map(e => [e.date, e.pieceRef, e.label, e.debitAccount, e.creditAccount, e.amount, e.tvaAmount, STATUS_LABEL[e.status]]),
+        ['Date', 'Journal', 'N°', 'Pièce', 'Libellé', 'Compte', 'Intitulé', 'Débit', 'Crédit', 'Statut'],
+        ...filteredEntries.flatMap(e => e.lines.map(l => [e.date, e.journal, e.number ?? '', e.pieceRef, l.label ?? e.label, l.accountCode, l.accountLabel ?? '', l.debit || '', l.credit || '', STATUS_LABEL[e.status]])),
       ],
     }]);
   };
 
   // Export to CSV
   const exportCSV = () => {
-    const headers = ['Date', 'PieceRef', 'Libelle', 'CompteDebit', 'CompteCredit', 'Montant_FCFA', 'Statut'];
-    const rows = filteredEntries.map(e => [
-      e.date,
-      e.pieceRef,
-      `"${e.label.replace(/"/g, '""')}"`,
-      e.debitAccountCode,
-      e.creditAccountCode,
-      e.amount,
-      e.status
-    ]);
+    const headers = ['Date', 'Journal', 'Numero', 'PieceRef', 'Libelle', 'Compte', 'Debit', 'Credit', 'Statut'];
+    const q = (t: string) => `"${t.replace(/"/g, '""')}"`;
+    const rows = filteredEntries.flatMap(e => e.lines.map(l => [
+      e.date, e.journal, e.number ?? '', q(e.pieceRef), q(l.label ?? e.label), l.accountCode, l.debit, l.credit, e.status,
+    ]));
 
     const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -207,7 +182,8 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
             Journal Général des Écritures SYSCOHADA
           </h3>
           <p className="text-xs text-[#7C709A]">
-            {dossierEntries.length} écritures enregistrées • Colonnes fixes et imputation en partie double
+            {dossierEntries.length} écritures enregistrées • Partie double, une ou plusieurs lignes par écriture
+            {activeDossier.lockedUntil && <span className="ml-1.5 inline-flex items-center gap-1 text-[#B45309] font-bold"><Lock className="w-3 h-3" /> bloquée jusqu'au {activeDossier.lockedUntil.split('-').reverse().join('/')}</span>}
           </p>
         </div>
 
@@ -243,6 +219,21 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
             </div>
           )}
 
+          <button
+            onClick={() => onEditEntry()}
+            className="px-3.5 py-2 bg-gradient-to-r from-[#7024E3] to-[#8B5CF6] text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-2xs"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Nouvelle écriture</span>
+          </button>
+
+          {recurring.length > 0 && (
+            <button onClick={() => setShowRecurring(v => !v)}
+              className="px-3.5 py-2 bg-[#F8F7FD] text-[#1E084A] text-xs font-bold rounded-xl border border-[#DDD6FE] hover:bg-[#EDE9FE] flex items-center gap-1.5">
+              <RotateCcw className="w-3.5 h-3.5 text-[#7024E3]" /> Récurrentes ({recurring.length})
+            </button>
+          )}
+
           {/* Import Excel */}
           {onOpenExcelImport && (
             <button
@@ -271,6 +262,26 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
           </button>
         </div>
       </div>
+
+      {showRecurring && recurring.length > 0 && (
+        <div className="bg-white border border-[#DDD6FE] p-4 rounded-xl shadow-2xs text-xs">
+          <h4 className="font-bold text-[#1E084A] mb-2">Écritures répétées chaque mois</h4>
+          <ul className="divide-y divide-[#EDE9FE]">
+            {recurring.map(r => (
+              <li key={r.id} className="flex items-center justify-between gap-2 py-2">
+                <span>
+                  <b>{r.label}</b> <span className="text-[#7C709A]">• {r.journal} • le {r.day} du mois • prochaine le {r.nextDate.split('-').reverse().join('/')} •
+                  {' '}{r.lines.reduce((s, l) => s + l.debit, 0).toLocaleString('fr-FR')} FCFA</span>
+                </span>
+                {onStopRecurring && (
+                  <button onClick={() => window.confirm(`Arrêter « ${r.label} » ? Les écritures déjà passées restent.`) && onStopRecurring(r.id)}
+                    className="px-2.5 py-1 border border-[#FECACA] text-[#DC2626] font-bold rounded-lg">Arrêter</button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Assistant IA du cabinet */}
       <div className="bg-[#F5F3FF] border border-[#DDD6FE] p-4 rounded-xl shadow-2xs space-y-2.5">
@@ -379,11 +390,26 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
           </button>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+          <select value={journalFilter} onChange={e => setJournalFilter(e.target.value)} title="Journal"
+            className="text-xs p-2 bg-[#F8F7FD] border border-[#DDD6FE] rounded-xl text-[#1E084A]">
+            <option value="">Tous les journaux</option>
+            {JOURNALS.map(j => <option key={j.code} value={j.code}>{j.code} — {j.label}</option>)}
+          </select>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="Du"
+            className="text-xs p-2 bg-[#F8F7FD] border border-[#DDD6FE] rounded-xl text-[#1E084A]" />
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} title="Au"
+            className="text-xs p-2 bg-[#F8F7FD] border border-[#DDD6FE] rounded-xl text-[#1E084A]" />
+          {(journalFilter || dateFrom || dateTo) && (
+            <button onClick={() => { setJournalFilter(''); setDateFrom(''); setDateTo(''); }} className="text-[11px] font-bold text-[#7C709A] underline">Effacer</button>
+          )}
+        </div>
+
         {/* Search Input */}
         <div className="relative w-full md:w-64">
           <input
             type="text"
-            placeholder="Rechercher libellé, réf, compte..."
+            placeholder="Libellé, pièce, compte, montant..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full text-xs p-2 pl-8 bg-[#F8F7FD] border border-[#DDD6FE] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#7024E3]/30 text-[#1E084A]"
@@ -409,12 +435,11 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
                     )}
                   </button>
                 </th>
-                <th className="p-3">Date & Réf</th>
+                <th className="p-3">Date & Pièce</th>
                 <th className="p-3">Libellé de l'opération</th>
-                <th className="p-3">Débit (SYSCOHADA)</th>
-                <th className="p-3">Crédit (SYSCOHADA)</th>
-                <th className="p-3 text-right">Montant Débit</th>
-                <th className="p-3 text-right">Montant Crédit</th>
+                <th className="p-3">Débit</th>
+                <th className="p-3">Crédit</th>
+                <th className="p-3 text-right">Montant</th>
                 <th className="p-3 text-center">Statut</th>
                 <th className="p-3 text-right">Actions</th>
               </tr>
@@ -444,7 +469,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
                     {/* Date & Ref */}
                     <td className="p-3 whitespace-nowrap font-mono text-[12px]">
                       <div className="font-bold text-[#1E084A]">{entry.date}</div>
-                      <div className="text-[10.5px] text-[#7C709A]">{entry.pieceRef}</div>
+                      <div className="text-[10.5px] text-[#7C709A]">{entry.journal}{entry.number ? ` n° ${entry.number}` : ''} • {entry.pieceRef}</div>
                     </td>
 
                     {/* Label */}
@@ -460,32 +485,21 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
                       )}
                     </td>
 
-                    {/* Debit Account */}
-                    <td className="p-3 whitespace-nowrap font-mono">
-                      <span className="font-bold text-[#7024E3] bg-[#F5F3FF] border border-[#DDD6FE] px-1.5 py-0.5 rounded-md">
-                        {entry.debitAccountCode}
-                      </span>
-                      <span className="text-[11px] text-[#7C709A] block truncate max-w-[140px] mt-0.5">
-                        {entry.debitAccount.replace(/^[0-9]+\s*-\s*/, '')}
-                      </span>
-                    </td>
+                    {/* Lignes au débit puis au crédit */}
+                    {(['debit', 'credit'] as const).map(side => (
+                      <td key={side} className="p-3 whitespace-nowrap font-mono align-top">
+                        {entry.lines.filter(l => l[side] > 0).map((l, i) => (
+                          <div key={i} className="mb-1 last:mb-0" title={l.accountLabel}>
+                            <span className={`font-bold px-1.5 py-0.5 rounded-md border ${side === 'debit' ? 'text-[#7024E3] bg-[#F5F3FF] border-[#DDD6FE]' : 'text-[#10B981] bg-[#F0FDF4] border-[#BBF7D0]'}`}>
+                              {l.accountCode}
+                            </span>
+                            <span className="ml-1.5 text-[11px] text-[#534674]">{l[side].toLocaleString('fr-FR')}</span>
+                            <span className="text-[10.5px] text-[#7C709A] block truncate max-w-[160px]">{l.accountLabel}</span>
+                          </div>
+                        ))}
+                      </td>
+                    ))}
 
-                    {/* Credit Account */}
-                    <td className="p-3 whitespace-nowrap font-mono">
-                      <span className="font-bold text-[#10B981] bg-[#F0FDF4] border border-[#BBF7D0] px-1.5 py-0.5 rounded-md">
-                        {entry.creditAccountCode}
-                      </span>
-                      <span className="text-[11px] text-[#7C709A] block truncate max-w-[140px] mt-0.5">
-                        {entry.creditAccount.replace(/^[0-9]+\s*-\s*/, '')}
-                      </span>
-                    </td>
-
-                    {/* Montant Débit */}
-                    <td className="p-3 text-right font-tabular font-bold text-[#1E084A] whitespace-nowrap">
-                      {entry.amount.toLocaleString('fr-FR')}
-                    </td>
-
-                    {/* Montant Crédit */}
                     <td className="p-3 text-right font-tabular font-bold text-[#1E084A] whitespace-nowrap">
                       {entry.amount.toLocaleString('fr-FR')}
                     </td>
@@ -522,11 +536,14 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
                     {/* Actions */}
                     <td className="p-3 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-1">
-                        {EDITABLE.includes(entry.status) && !entry.invoiceId && (
+                        {locked(entry) && (
+                          <span className="p-1.5 text-[#B45309]" title="Période bloquée : corrigez par contre-passation"><Lock className="w-3.5 h-3.5" /></span>
+                        )}
+                        {EDITABLE.includes(entry.status) && !entry.invoiceId && !locked(entry) && (
                           <button
-                            onClick={() => startEdit(entry)}
+                            onClick={() => onEditEntry(entry)}
                             className="p-1.5 text-[#1E084A] hover:bg-[#F5F3FF] rounded-lg transition-colors"
-                            title="Modifier l'imputation comptable"
+                            title="Modifier l'écriture"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
@@ -556,7 +573,21 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
                             <Check className="w-4 h-4 font-bold" />
                           </button>
                         )}
-                        {entry.status === 'validated' && !entry.invoiceId && (
+                        {!entry.invoiceId && (
+                          <button onClick={() => duplicate(entry)} className="p-1.5 text-[#1E084A] hover:bg-[#F5F3FF] rounded-lg transition-colors" title="Dupliquer (nouvelle écriture pré-remplie)">
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {canReverse(entry) && (
+                          <button
+                            onClick={() => { const r = askReason('la contre-passation (datée d’aujourd’hui)'); if (r !== null) onEntryAction('reverse', entry.id, r); }}
+                            className="p-1.5 text-[#7024E3] hover:bg-[#F5F3FF] rounded-lg transition-colors"
+                            title="Contre-passer : écriture inverse datée d'aujourd'hui"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {entry.status === 'validated' && !entry.invoiceId && !locked(entry) && (
                           <button
                             onClick={() => { const r = askReason('la dévalidation'); if (r !== null) onEntryAction('unvalidate', entry.id, r); }}
                             className="p-1.5 text-[#D97706] hover:bg-[#FEF3C7] rounded-lg transition-colors"
@@ -565,7 +596,7 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
                             <Undo2 className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        {entry.status !== 'cancelled' && !entry.invoiceId && (
+                        {entry.status !== 'cancelled' && !entry.invoiceId && !locked(entry) && (
                           <button
                             onClick={() => { const r = askReason("l'annulation"); if (r !== null) onEntryAction('cancel', entry.id, r); }}
                             className="p-1.5 text-[#DC2626] hover:bg-[#FEE2E2] rounded-lg transition-colors"
@@ -584,91 +615,6 @@ export const JournalValidation: React.FC<JournalValidationProps> = ({
         </div>
       </div>
 
-      {/* Edit Entry Modal */}
-      {editingEntry && (
-        <div className="fixed inset-0 bg-[#1E084A]/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-[#DDD6FE] w-full max-w-lg rounded-2xl p-6 shadow-2xl">
-            <div className="flex justify-between items-center pb-3.5 border-b border-[#EDE9FE] mb-4">
-              <h4 className="font-heading text-lg font-bold text-[#1E084A]">
-                Modifier l'Écriture SYSCOHADA
-              </h4>
-              <button onClick={() => setEditingEntry(null)} className="p-1 text-[#7C709A] hover:text-[#1E084A] rounded-lg hover:bg-slate-100 transition-colors">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={saveEdit} className="space-y-3.5 text-xs">
-              <div>
-                <label className="block font-bold text-[#1E084A] mb-1.5">Libellé d'écriture</label>
-                <input
-                  type="text"
-                  value={editLabel}
-                  onChange={(e) => setEditLabel(e.target.value)}
-                  className="w-full p-2.5 bg-[#F8F7FD] border border-[#DDD6FE] rounded-xl text-[#1E084A] focus:outline-none focus:ring-2 focus:ring-[#7024E3]/30"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-[#1E084A] mb-1.5">Montant (FCFA)</label>
-                <input
-                  type="number"
-                  value={editAmount}
-                  onChange={(e) => setEditAmount(parseInt(e.target.value) || 0)}
-                  className="w-full p-2.5 bg-[#F8F7FD] border border-[#DDD6FE] rounded-xl font-mono text-[#1E084A] focus:outline-none focus:ring-2 focus:ring-[#7024E3]/30"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-[#7024E3] mb-1.5">Compte Débit (Charge / Trésorerie)</label>
-                  <select
-                    value={editDebitCode}
-                    onChange={(e) => setEditDebitCode(e.target.value)}
-                    className="w-full p-2.5 bg-[#F8F7FD] border border-[#DDD6FE] rounded-xl font-mono text-[#1E084A] focus:outline-none focus:ring-2 focus:ring-[#7024E3]/30"
-                  >
-                    {accounts.map(a => (
-                      <option key={a.code} value={a.code}>
-                        {a.code} - {a.label.slice(0, 30)}...
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-bold text-[#10B981] mb-1.5">Compte Crédit (Produit / Trésorerie)</label>
-                  <select
-                    value={editCreditCode}
-                    onChange={(e) => setEditCreditCode(e.target.value)}
-                    className="w-full p-2.5 bg-[#F8F7FD] border border-[#DDD6FE] rounded-xl font-mono text-[#1E084A] focus:outline-none focus:ring-2 focus:ring-[#7024E3]/30"
-                  >
-                    {accounts.map(a => (
-                      <option key={a.code} value={a.code}>
-                        {a.code} - {a.label.slice(0, 30)}...
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2.5 pt-3 border-t border-[#EDE9FE]">
-                <button
-                  type="button"
-                  onClick={() => setEditingEntry(null)}
-                  className="px-4 py-2 border border-[#DDD6FE] rounded-xl font-bold text-[#1E084A] hover:bg-[#F8F7FD] transition-colors"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-gradient-to-r from-[#7024E3] to-[#8B5CF6] text-white font-bold rounded-xl shadow-xs hover:from-[#5B18C4] hover:to-[#7024E3] transition-all"
-                >
-                  Enregistrer
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

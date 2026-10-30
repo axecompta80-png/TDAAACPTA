@@ -15,10 +15,23 @@ export type PaymentMethod =
 export interface AuditLog {
   id: string;
   timestamp: string;
-  action: 'created_by_ai' | 'validated_by_expert' | 'auto_validated' | 'edited_by_expert' | 'anomaly_flagged' | 'submitted_for_review' | 'unvalidated' | 'cancelled';
+  action: 'created_by_ai' | 'validated_by_expert' | 'auto_validated' | 'edited_by_expert' | 'anomaly_flagged' | 'submitted_for_review' | 'unvalidated' | 'cancelled' | 'reversed';
   author: string;
   notes?: string;
   previousValue?: string;
+}
+
+/** Journaux : ventes, achats, banque (et Mobile Money), caisse, opérations diverses, à-nouveaux. */
+export type JournalCode = 'VT' | 'AC' | 'BQ' | 'CA' | 'OD' | 'AN';
+
+/** Une ligne d'écriture : un compte, au débit OU au crédit. */
+export interface JournalLine {
+  accountCode: string;
+  /** Intitulé du compte, renseigné par le serveur. */
+  accountLabel?: string;
+  label?: string;
+  debit: number;
+  credit: number;
 }
 
 export interface JournalEntry {
@@ -26,12 +39,13 @@ export interface JournalEntry {
   date: string;
   label: string;
   pieceRef: string;
-  debitAccount: string; // e.g. "5711 - Caisse Principale"
-  debitAccountCode: string; // "5711"
-  creditAccount: string; // e.g. "7011 - Vente de Marchandises"
-  creditAccountCode: string; // "7011"
-  amount: number; // Montant TTC en FCFA
-  tvaAmount: number; // Montant TVA en FCFA
+  journal: JournalCode;
+  /** Numéro d'ordre dans le journal du dossier, attribué par le serveur. */
+  number?: number;
+  /** Au moins deux lignes, total débit = total crédit. */
+  lines: JournalLine[];
+  /** Total débit (= total crédit), calculé par le serveur. */
+  amount: number;
   clientDossierId: string;
   status: TransactionStatus;
   detectedAnomaly?: string;
@@ -47,6 +61,20 @@ export interface JournalEntry {
   validatedAt?: string;
   /** Facture à l'origine de l'écriture (écritures générées automatiquement). */
   invoiceId?: string;
+  /** Écriture contre-passée par celle-ci. */
+  reversalOfId?: string;
+}
+
+/** Écriture répétée chaque mois. */
+export interface RecurringEntry {
+  id: string;
+  clientDossierId: string;
+  label: string;
+  journal: JournalCode;
+  lines: JournalLine[];
+  day: number;
+  nextDate: string;
+  active: boolean;
 }
 
 export interface SYSCOHADAAccount {
@@ -76,10 +104,18 @@ export interface InvoicePayment {
   createdAt: string;
 }
 
+/** Facture client, avoir client, facture fournisseur. */
+export type InvoiceKind = 'sale' | 'credit_note' | 'purchase';
+
 export interface Invoice {
   id: string;
   clientDossierId: string;
+  kind: InvoiceKind;
   number: string;
+  /** Numéro de la facture du fournisseur. */
+  externalRef?: string;
+  /** Avoir : facture client d'origine. */
+  originalInvoiceId?: string;
   date: string;
   dueDate: string;
   mode: 'cash' | 'credit';
@@ -108,6 +144,9 @@ export interface Invoice {
 
 /** Données saisies dans le formulaire de facture (totaux recalculés par le serveur). */
 export interface InvoiceInput {
+  kind?: InvoiceKind;
+  externalRef?: string;
+  originalInvoiceId?: string;
   date: string;
   dueDate?: string;
   mode: 'cash' | 'credit';
@@ -141,6 +180,8 @@ export interface ClientDossier {
   ifu: string;
   regimeFiscal: 'Réel Simplifié' | 'Réel Normal' | 'Synthétique / Forfait';
   currency: string;
+  /** Écritures datées jusqu'à ce jour inclus : bloquées (période déclarée ou exercice clôturé). */
+  lockedUntil?: string;
 }
 
 /** Entrée du sélecteur Entreprise / Dossiers (y compris les dossiers hors périmètre). */
@@ -152,7 +193,7 @@ export interface DossierDirectoryItem {
 }
 
 /** Champs saisis pour les informations d'une entreprise ou d'un dossier. */
-export type DossierInfo = Omit<ClientDossier, 'id' | 'isMain' | 'ownerName'>;
+export type DossierInfo = Omit<ClientDossier, 'id' | 'isMain' | 'ownerName' | 'lockedUntil'>;
 
 export interface ChatMessage {
   id: string;

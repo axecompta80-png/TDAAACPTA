@@ -1,24 +1,48 @@
 import React, { useState } from 'react';
 import { JournalEntry, ClientDossier } from '../../types';
 import { computeFinancialReport } from '../../utils/analytics';
-import { Printer, FileSpreadsheet } from 'lucide-react';
+import { Printer, FileSpreadsheet, Lock, Unlock, AlertTriangle } from 'lucide-react';
 import { downloadXlsx, fileSafe } from '../../utils/excelExport';
 
 interface FinancialStatementsProps {
   entries: JournalEntry[];
   activeDossier: ClientDossier;
+  /** Bloque les écritures jusqu'à la date (clôture = 31/12), null pour tout débloquer. */
+  onLock?: (until: string | null) => Promise<void>;
 }
 
 export const FinancialStatements: React.FC<FinancialStatementsProps> = ({
   entries,
-  activeDossier
+  activeDossier,
+  onLock
 }) => {
   const [activeTab, setActiveTab] = useState<'bilan' | 'resultat'>('bilan');
 
-  const validatedEntries = entries.filter(e => e.clientDossierId === activeDossier.id && e.status === 'validated');
+  const dossierEntries = entries.filter(e => e.clientDossierId === activeDossier.id);
+  const validatedEntries = dossierEntries.filter(e => e.status === 'validated');
+  const currentYear = String(new Date().getFullYear());
+  const years = [...new Set([currentYear, ...dossierEntries.map(e => e.date.slice(0, 4))])].sort().reverse();
+  const [year, setYear] = useState(currentYear);
 
   // Rapport financier calculé exclusivement à partir des écritures validées (aucune valeur factice).
-  const report = computeFinancialReport(validatedEntries);
+  const report = computeFinancialReport(validatedEntries, year);
+
+  // Clôture : toutes les écritures de l'exercice validées ou annulées, puis blocage jusqu'au 31/12.
+  const closed = !!activeDossier.lockedUntil && activeDossier.lockedUntil >= `${year}-12-31`;
+  const openInYear = dossierEntries.filter(e => e.date.startsWith(year) && ['draft', 'pending_review', 'anomaly'].includes(e.status)).length;
+  const [closing, setClosing] = useState(false);
+  const closeYear = async () => {
+    if (!onLock || !window.confirm(`Clôturer l'exercice ${year} ? Les écritures jusqu'au 31/12/${year} ne pourront plus être ajoutées, modifiées ni annulées (seule la contre-passation reste possible). Le résultat est reporté automatiquement sur ${Number(year) + 1}.`)) return;
+    setClosing(true);
+    await onLock(`${year}-12-31`);
+    setClosing(false);
+  };
+  const reopenYear = async () => {
+    if (!onLock || !window.confirm(`Rouvrir l'exercice ${year} (et les suivants) ? Les exercices antérieurs restent clôturés. Réservé au compte principal.`)) return;
+    setClosing(true);
+    await onLock(`${Number(year) - 1}-12-31`);
+    setClosing(false);
+  };
 
   const sales701 = report.revenue;
   const purchases601 = report.purchases;
@@ -33,6 +57,7 @@ export const FinancialStatements: React.FC<FinancialStatementsProps> = ({
 
   const capital1 = report.capital;
   const debts4 = report.dettes;
+  const overdrafts = report.overdrafts;
 
   const commercialMargin = report.grossMargin;
   const addedValue = report.addedValue;
@@ -42,21 +67,22 @@ export const FinancialStatements: React.FC<FinancialStatementsProps> = ({
   const netProfit = report.netProfit;
 
   const totalActif = report.totalActif;
-  const calculatedReserves = Math.max(0, report.totalPassif - capital1 - netProfit - debts4);
+  const reportANouveau = report.reportANouveau;
   const totalPassif = report.totalPassif;
 
   const exportXlsx = () => {
     const r = report;
-    downloadXlsx(`Etats_Financiers_${fileSafe(activeDossier.name)}_${new Date().toISOString().slice(0, 10)}`, [
+    downloadXlsx(`Etats_Financiers_${fileSafe(activeDossier.name)}_${year}`, [
       {
         name: 'Bilan',
         rows: [
+          [`Bilan au 31/12/${year}`],
           ['ACTIF', 'Montant', '', 'PASSIF', 'Montant'],
           ['Immobilisations brutes', r.immobilisationsBrutes, '', 'Capital et réserves', r.capital],
-          ['Amortissements', -r.amortissements, '', 'Résultat net de l\'exercice', r.resultatBilan],
-          ['Immobilisations nettes', r.immobilisationsNettes, '', 'Dettes (fournisseurs, fiscales, sociales)', r.dettes],
-          ['Stocks', r.stocks, '', '', ''],
-          ['Créances', r.creances, '', '', ''],
+          ['Amortissements', -r.amortissements, '', 'Report à nouveau', r.reportANouveau],
+          ['Immobilisations nettes', r.immobilisationsNettes, '', 'Résultat net de l\'exercice', r.resultatBilan],
+          ['Stocks', r.stocks, '', 'Dettes (emprunts, fournisseurs, fiscales, sociales)', r.dettes],
+          ['Créances', r.creances, '', 'Trésorerie passif (découverts)', r.overdrafts],
           ['Trésorerie actif', r.treasury, '', '', ''],
           ['TOTAL ACTIF', r.totalActif, '', 'TOTAL PASSIF', r.totalPassif],
           [],
@@ -66,6 +92,7 @@ export const FinancialStatements: React.FC<FinancialStatementsProps> = ({
       {
         name: 'Compte de résultat',
         rows: [
+          [`Compte de résultat ${year}`],
           ['Rubrique', 'Montant HT'],
           ['Chiffre d\'affaires (70)', r.revenue],
           ['Autres produits (71-75)', r.otherIncome],
@@ -99,12 +126,29 @@ export const FinancialStatements: React.FC<FinancialStatementsProps> = ({
           <h3 className="font-heading text-xl font-bold text-[#1E084A]">
             États Financiers SYSCOHADA Révisé
           </h3>
-          <p className="text-xs text-[#7C709A]">
-            {activeDossier.name} • Exercice 2026
+          <p className="text-xs text-[#7C709A] flex items-center gap-1.5">
+            {activeDossier.name} • Exercice
+            <select value={year} onChange={e => setYear(e.target.value)} className="text-xs font-bold p-1 bg-[#F8F7FD] border border-[#DDD6FE] rounded-lg text-[#1E084A]">
+              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            {closed && <span className="inline-flex items-center gap-1 text-[#B45309] font-bold"><Lock className="w-3 h-3" /> clôturé</span>}
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {onLock && !closed && (
+            <button onClick={closeYear} disabled={closing || openInYear > 0}
+              title={openInYear > 0 ? `${openInYear} écriture(s) de ${year} à valider ou annuler avant la clôture` : `Clôturer l'exercice ${year}`}
+              className="px-3.5 py-2 bg-[#1E084A] text-white text-xs font-bold rounded-xl flex items-center gap-1.5 disabled:opacity-40">
+              <Lock className="w-3.5 h-3.5" /> Clôturer {year}{openInYear > 0 ? ` (${openInYear} à valider)` : ''}
+            </button>
+          )}
+          {onLock && closed && (
+            <button onClick={reopenYear} disabled={closing}
+              className="px-3.5 py-2 bg-[#F8F7FD] text-[#1E084A] text-xs font-bold rounded-xl border border-[#DDD6FE] flex items-center gap-1.5">
+              <Unlock className="w-3.5 h-3.5" /> Rouvrir {year}
+            </button>
+          )}
           {/* Tab buttons */}
           <div className="bg-[#F8F7FD] p-1 rounded-xl border border-[#DDD6FE] flex">
             <button
@@ -146,6 +190,13 @@ export const FinancialStatements: React.FC<FinancialStatementsProps> = ({
         </div>
       </div>
 
+      {report.imbalance !== 0 && (
+        <div className="p-3 bg-[#FEF3C7] border border-[#FDE68A] rounded-xl text-xs text-[#B45309] flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4" />
+          Écart actif - passif de {report.imbalance.toLocaleString('fr-FR')} FCFA : certains comptes ont un solde inhabituel (stock ou immobilisation créditeurs). Vérifiez la balance.
+        </div>
+      )}
+
       {/* BILAN VIEW */}
       {activeTab === 'bilan' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -181,7 +232,7 @@ export const FinancialStatements: React.FC<FinancialStatementsProps> = ({
                     <span className="font-tabular font-mono text-[#1E084A]">{stocks3.toLocaleString('fr-FR')}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Créances clients et comptes rattachés (Compte 41)</span>
+                    <span>Créances clients, TVA à récupérer et autres débiteurs (Classe 4)</span>
                     <span className="font-tabular font-mono text-[#1E084A]">{receivables4.toLocaleString('fr-FR')}</span>
                   </div>
                 </div>
@@ -219,20 +270,20 @@ export const FinancialStatements: React.FC<FinancialStatementsProps> = ({
               <div>
                 <div className="flex justify-between font-bold text-[#1E084A] border-b border-[#EDE9FE] pb-1.5">
                   <span>CAPITAUX PROPRES & RESSOURCES (Classe 1)</span>
-                  <span className="font-tabular font-black">{(capital1 + calculatedReserves + netProfit).toLocaleString('fr-FR')}</span>
+                  <span className="font-tabular font-black">{(capital1 + reportANouveau + netProfit).toLocaleString('fr-FR')}</span>
                 </div>
                 <div className="pl-3 pt-1.5 space-y-1.5 text-[12px] text-[#7C709A]">
                   <div className="flex justify-between">
-                    <span>Capital social (Compte 101)</span>
+                    <span>Capital, réserves et subventions (Comptes 10 à 15)</span>
                     <span className="font-tabular font-mono text-[#1E084A]">{capital1.toLocaleString('fr-FR')}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Réserves et reports à nouveau</span>
-                    <span className="font-tabular font-mono text-[#1E084A]">{calculatedReserves.toLocaleString('fr-FR')}</span>
+                    <span>Report à nouveau (résultats des exercices antérieurs)</span>
+                    <span className="font-tabular font-mono text-[#1E084A]">{reportANouveau.toLocaleString('fr-FR')}</span>
                   </div>
-                  <div className="flex justify-between font-bold text-[#10B981]">
-                    <span>Résultat net de la période (bénéfice)</span>
-                    <span className="font-tabular font-mono">+{netProfit.toLocaleString('fr-FR')}</span>
+                  <div className={`flex justify-between font-bold ${netProfit >= 0 ? 'text-[#10B981]' : 'text-[#EF4444]'}`}>
+                    <span>Résultat net de l'exercice {year} ({netProfit >= 0 ? 'bénéfice' : 'perte'})</span>
+                    <span className="font-tabular font-mono">{netProfit >= 0 ? '+' : ''}{netProfit.toLocaleString('fr-FR')}</span>
                   </div>
                 </div>
               </div>
@@ -240,11 +291,11 @@ export const FinancialStatements: React.FC<FinancialStatementsProps> = ({
               {/* Passif Circulant */}
               <div>
                 <div className="flex justify-between font-bold text-[#1E084A] border-b border-[#EDE9FE] pb-1.5">
-                  <span>PASSIF CIRCULANT (Classe 4)</span>
+                  <span>DETTES (emprunts 16 et tiers classe 4)</span>
                   <span className="font-tabular font-black">{debts4.toLocaleString('fr-FR')}</span>
                 </div>
                 <div className="pl-3 pt-1.5 text-[12px] text-[#7C709A] flex justify-between">
-                  <span>Fournisseurs d'exploitation et dettes fiscales (Compte 40)</span>
+                  <span>Emprunts, fournisseurs, dettes fiscales et sociales</span>
                   <span className="font-tabular font-mono text-[#1E084A]">{debts4.toLocaleString('fr-FR')}</span>
                 </div>
               </div>
@@ -253,11 +304,11 @@ export const FinancialStatements: React.FC<FinancialStatementsProps> = ({
               <div>
                 <div className="flex justify-between font-bold text-[#1E084A] border-b border-[#EDE9FE] pb-1.5">
                   <span>TRÉSORERIE - PASSIF (Classe 5)</span>
-                  <span className="font-tabular font-black">0</span>
+                  <span className="font-tabular font-black">{overdrafts.toLocaleString('fr-FR')}</span>
                 </div>
                 <div className="pl-3 pt-1.5 text-[12px] text-[#7C709A] flex justify-between">
                   <span>Crédits d'escompte & découverts bancaires</span>
-                  <span className="font-tabular font-mono text-[#1E084A]">0</span>
+                  <span className="font-tabular font-mono text-[#1E084A]">{overdrafts.toLocaleString('fr-FR')}</span>
                 </div>
               </div>
 
@@ -384,10 +435,10 @@ export const FinancialStatements: React.FC<FinancialStatementsProps> = ({
 
                 {/* Resultat Net Final */}
                 <tr className="bg-[#1E084A] text-white font-extrabold text-sm">
-                  <td className="py-3.5 uppercase text-[#A78BFA]">= RÉSULTAT NET DE L'EXERCICE (BÉNÉFICE)</td>
-                  <td className="py-3.5 text-[#C4B5FD] font-mono text-xs">Compte 131</td>
-                  <td className="py-3.5 text-right font-tabular text-[#10B981] text-base">
-                    +{netProfit.toLocaleString('fr-FR')} FCFA
+                  <td className="py-3.5 uppercase text-[#A78BFA]">= RÉSULTAT NET DE L'EXERCICE {year} ({netProfit >= 0 ? 'BÉNÉFICE' : 'PERTE'})</td>
+                  <td className="py-3.5 text-[#C4B5FD] font-mono text-xs">Compte {netProfit >= 0 ? '131' : '139'}</td>
+                  <td className={`py-3.5 text-right font-tabular text-base ${netProfit >= 0 ? 'text-[#10B981]' : 'text-[#FCA5A5]'}`}>
+                    {netProfit >= 0 ? '+' : ''}{netProfit.toLocaleString('fr-FR')} FCFA
                   </td>
                 </tr>
               </tbody>
